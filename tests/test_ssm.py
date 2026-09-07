@@ -52,6 +52,7 @@ def test_run_script_polls_until_success():
     sent = fake.sent[0]
     assert sent["DocumentName"] == "AWS-RunShellScript" and sent["InstanceIds"] == ["i-1"]
     assert sent["Parameters"]["commands"] == ["echo hi"] and sent["TimeoutSeconds"] == 60
+    assert sent["Parameters"]["executionTimeout"] == ["60"]  # 限制脚本运行时长，而非仅下发超时
 
 
 def test_run_script_local_timeout():

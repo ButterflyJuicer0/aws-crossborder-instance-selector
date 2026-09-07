@@ -26,7 +26,9 @@ class SsmRunner:
     def run_script(self, instance_id, script, timeout_s=120):
         cmd = self.ssm.send_command(
             InstanceIds=[instance_id], DocumentName="AWS-RunShellScript",
-            Parameters={"commands": [script]}, TimeoutSeconds=timeout_s)["Command"]["CommandId"]
+            # TimeoutSeconds 只约束下发（等待实例接单）；executionTimeout 才限制脚本实际运行时长
+            Parameters={"commands": [script], "executionTimeout": [str(timeout_s)]},
+            TimeoutSeconds=timeout_s)["Command"]["CommandId"]
         deadline = self._now() + timeout_s + 30
         while True:
             self._sleep(self.poll_s)

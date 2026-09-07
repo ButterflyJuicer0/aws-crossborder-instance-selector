@@ -45,6 +45,23 @@ def test_dnsbl():
     assert s.check("5.6.7.8").listed is False
 
 
+def test_dnsbl_only_127_0_0_0_24_counts_as_listed():
+    # 127.0.0.4 属于名单响应段 → listed
+    class R:
+        def resolve(self, q, t):
+            return ["127.0.0.4"]
+    assert DnsblSource(zones=["z.example.org"], resolver=R()).check("1.2.3.4").listed is True
+
+
+def test_dnsbl_error_code_is_not_listed():
+    # Spamhaus 公共镜像经开放递归/限速时返回 127.255.255.254/255 → 视为源错误，不否决候选
+    class R:
+        def resolve(self, q, t):
+            return ["127.255.255.254"]
+    r = DnsblSource(zones=["zen.example.org"], resolver=R()).check("1.2.3.4")
+    assert r.listed is False and "error" in r.detail and "127.255.255.254" in r.detail
+
+
 def test_badlist_hit_miss_and_single_fetch():
     calls = {"n": 0}
     def fetcher(u):

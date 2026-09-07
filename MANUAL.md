@@ -87,6 +87,7 @@ python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
 | RunInstances 配额/容量不足 | 本轮自动缩批并在报告标注；提升该 Region vCPU 配额或减小 `batch_size` |
 | ip-ranges 下载失败 | prefix 置空、流程继续；检查网络或稍后重试 |
 | 所有候选 `reverse_unreachable` | 探测目标被封或 ICMP 限速，更换 `backends.reverse.targets` 中的三网目标 |
+| 每次都 `no_qualified`（信誉全否决） | 使用公共递归 DNS 时 Spamhaus 会对每次查询返回 `127.255.255.254`（经开放递归）/`127.255.255.255`（被限速），本工具已将其识别为源错误而非命中；若报告里 dnsbl detail 为 `error:...`，请改用本机/VPC 解析器，或在 `reputation.dnsbl_zones` 换用不受此限的 zone |
 
 ## 9. 把 winner 交给生产
 

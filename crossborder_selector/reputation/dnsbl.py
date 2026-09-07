@@ -1,6 +1,13 @@
+import ipaddress
+
 import dns.resolver
 from crossborder_selector.models import SourceResult
 from crossborder_selector.reputation.base import ReputationSource
+
+# 名单命中的合法响应段；Spamhaus/DNSBL 约定用 127.0.0.0/24 内的地址编码命中类型。
+_LISTED_NET = ipaddress.ip_network("127.0.0.0/24")
+# 127.255.255.0/24 是错误码段（如 127.255.255.254=经开放递归查询，127.255.255.255=被限速），不是命中。
+_ERROR_NET = ipaddress.ip_network("127.255.255.0/24")
 
 
 def reverse_ip(address: str) -> str:
@@ -16,11 +23,29 @@ class DnsblSource(ReputationSource):
         self._resolver = resolver or dns.resolver.Resolver()
 
     def check(self, address: str) -> SourceResult:
-        rev, hits = reverse_ip(address), []
+        rev, hits, errors = reverse_ip(address), [], []
         for zone in self.zones:
             try:
-                if self._resolver.resolve(f"{rev}.{zone}", "A"):
-                    hits.append(zone)
+                answers = self._resolver.resolve(f"{rev}.{zone}", "A")
             except Exception:
-                continue  # 未命中或解析失败均视为该 zone 不在名单
-        return SourceResult(self.name, bool(hits), ",".join(hits))
+                continue  # NXDOMAIN 等未命中或解析失败：该 zone 不在名单
+            listed_here, err_code = False, None
+            for ans in answers:
+                try:
+                    ip = ipaddress.ip_address(str(ans))
+                except ValueError:
+                    continue
+                if ip in _ERROR_NET:
+                    err_code = str(ans)
+                elif ip in _LISTED_NET:
+                    listed_here = True
+                # 其它意外地址：不计命中
+            if listed_here:
+                hits.append(zone)
+            elif err_code is not None:
+                errors.append(f"{zone}={err_code}")
+        if hits:
+            return SourceResult(self.name, True, ",".join(hits))
+        if errors:
+            return SourceResult(self.name, False, "error:" + ";".join(errors))
+        return SourceResult(self.name, False, "")

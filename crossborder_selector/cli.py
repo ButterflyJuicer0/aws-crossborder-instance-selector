@@ -1,0 +1,161 @@
+"""命令行入口：select（多轮选机）、cleanup（按 run-id 清理）、report（重生成报告）。"""
+import argparse
+import os
+import secrets
+import sys
+from datetime import datetime, timezone
+
+import boto3
+
+from crossborder_selector.aws.ec2 import Ec2Manager
+from crossborder_selector.aws.infra import ensure_infra, delete_infra
+from crossborder_selector.aws.ipranges import load_ip_ranges, PrefixLookup
+from crossborder_selector.aws.ssm import SsmRunner
+from crossborder_selector.config import load_config
+from crossborder_selector.orchestrator import Orchestrator
+from crossborder_selector.probes.globalping import GlobalpingBackend
+from crossborder_selector.probes.itdog import ItdogBackend
+from crossborder_selector.probes.reverse import ReverseBackend
+from crossborder_selector.probes.ripeatlas import RipeAtlasBackend
+from crossborder_selector.report import write_reports, regenerate
+from crossborder_selector.reputation.abuseipdb import build_sources
+
+
+def new_run_id() -> str:
+    return f"xb-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{secrets.token_hex(2)}"
+
+
+def default_factory(cfg) -> dict:
+    return {name: boto3.client(name, region_name=cfg.region) for name in ("ec2", "iam", "ssm")}
+
+
+def build_backends(cfg, ssm_runner) -> list:
+    b, out = cfg.backends, []
+    if b["reverse"]["enabled"]:
+        out.append(ReverseBackend(ssm_runner, b["reverse"]))
+    if b["globalping"]["enabled"]:
+        out.append(GlobalpingBackend(b["globalping"]))
+    if b["ripeatlas"]["enabled"] and (b["ripeatlas"].get("api_key") or "").strip():
+        out.append(RipeAtlasBackend(b["ripeatlas"]))
+    if b["itdog"]["enabled"]:
+        out.append(ItdogBackend(b["itdog"]))
+    return out
+
+
+def plan_summary(cfg, run_id) -> str:
+    enabled = [n for n, v in cfg.backends.items() if v["enabled"]
+               and not (n == "ripeatlas" and not (v.get("api_key") or "").strip())]
+    lines = [f"DRY-RUN run-id={run_id}", f"region={cfg.region}",
+             f"per round: {cfg.batch_size} x {cfg.instance_type}, max_rounds={cfg.max_rounds}, "
+             f"keep_top_k={cfg.keep_top_k}, target_score={cfg.target_score}",
+             f"infra: subnet={cfg.subnet_id or '<default VPC>'} sg={cfg.security_group_id or 'crossborder-selector-sg'} "
+             f"profile={cfg.instance_profile_name or 'crossborder-selector-ssm'} ami={cfg.image_id or '<AL2023 latest>'}",
+             f"backends: {', '.join(enabled)}", f"protect winner: {cfg.protect}",
+             "reverse targets: " + "; ".join(f"{k}={','.join(v)}" for k, v in cfg.backends['reverse']['targets'].items()),
+             "No AWS resources will be created."]
+    return "\n".join(lines)
+
+
+def _overrides(args) -> dict:
+    o = {}
+    for k in ("region", "batch_size", "max_rounds", "keep_top_k", "target_score", "instance_type"):
+        v = getattr(args, k, None)
+        if v is not None:
+            o[k] = v
+    if getattr(args, "protect", False):
+        o["protect"] = True
+    if getattr(args, "enable_backend", None):
+        o["enable_backends"] = args.enable_backend
+    if getattr(args, "disable_backend", None):
+        o["disable_backends"] = args.disable_backend
+    return o
+
+
+def _load(args):
+    try:
+        return load_config(args.config, _overrides(args))
+    except ValueError as e:
+        print(f"config error: {e}", file=sys.stderr)
+        raise SystemExit(2)
+
+
+def _do_select(args, factory) -> int:
+    cfg, run_id = _load(args), new_run_id()
+    if args.dry_run:
+        print(plan_summary(cfg, run_id))
+        return 0
+    print(f"run-id: {run_id}  (cleanup: python -m crossborder_selector.cli cleanup --region {cfg.region} --run-id {run_id})")
+    clients = factory(cfg)
+    infra = ensure_infra(clients["ec2"], clients["iam"], clients["ssm"], cfg)
+    ssm_runner = SsmRunner(clients["ssm"])
+    prefixes = load_ip_ranges(cache_path=os.path.join(cfg.output_dir, "ip-ranges.json"))
+    orch = Orchestrator(cfg, Ec2Manager(clients["ec2"]), ssm_runner, build_backends(cfg, ssm_runner),
+                        build_sources(cfg.reputation), PrefixLookup(prefixes, cfg.region), infra, run_id)
+    try:
+        result = orch.run()
+    except Exception as e:
+        print(f"run failed: {e}. Non-winner instances were terminated; verify with cleanup --run-id {run_id}",
+              file=sys.stderr)
+        return 1
+    paths = write_reports(result, cfg)
+    print(f"stop reason: {result.stop_reason}")
+    for w in result.winners:
+        print(f"WINNER {w.candidate.instance_id} {w.candidate.public_ip} prefix={w.candidate.prefix} score={w.composite}")
+    print(f"reports: {paths['json']}  {paths['md']}  {paths['csv']}")
+    print(f"run-id: {run_id}")
+    return 0
+
+
+def _do_cleanup(args, factory) -> int:
+    cfg = _load(args)
+    clients = factory(cfg)
+    m = Ec2Manager(clients["ec2"])
+    ids = m.list_run_instances(args.run_id)
+    m.terminate(ids)
+    print(f"terminated {len(ids)} instance(s) tagged crossborder-run-id={args.run_id}: {ids}")
+    if args.include_infra:
+        if m.has_winners():
+            print("winners exist; refusing to delete shared SG / instance profile", file=sys.stderr)
+            return 1
+        delete_infra(clients["ec2"], clients["iam"])
+        print("deleted crossborder-selector SG and instance profile")
+    return 0
+
+
+def _do_report(args) -> int:
+    path = os.path.join(args.output_dir, args.run_id, "report.json")
+    paths = regenerate(path)
+    print(f"regenerated: {paths['md']}  {paths['csv']}")
+    return 0
+
+
+def _parser():
+    p = argparse.ArgumentParser(prog="crossborder-selector")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("select", help="多轮启动候选 EC2 并保留跨境最优实例")
+    s.add_argument("--config"); s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--region"); s.add_argument("--instance-type")
+    for k in ("--batch-size", "--max-rounds", "--keep-top-k"):
+        s.add_argument(k, type=int)
+    s.add_argument("--target-score", type=float)
+    s.add_argument("--enable-backend", action="append"); s.add_argument("--disable-backend", action="append")
+    s.add_argument("--protect", action="store_true", help="对 winner 开启 stop/termination protection")
+    c = sub.add_parser("cleanup", help="终止某 run-id 的全部候选机")
+    c.add_argument("--config"); c.add_argument("--region"); c.add_argument("--run-id", required=True)
+    c.add_argument("--include-infra", action="store_true")
+    r = sub.add_parser("report", help="从 report.json 重生成 md/csv")
+    r.add_argument("--run-id", required=True); r.add_argument("--output-dir", default="./out")
+    return p
+
+
+def main(argv=None, factory=default_factory) -> int:
+    args = _parser().parse_args(argv)
+    if args.cmd == "select":
+        return _do_select(args, factory)
+    if args.cmd == "cleanup":
+        return _do_cleanup(args, factory)
+    return _do_report(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

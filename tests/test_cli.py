@@ -1,0 +1,66 @@
+import json
+import re
+import boto3
+import pytest
+from moto import mock_aws
+
+from crossborder_selector import cli
+from crossborder_selector.config import load_config
+
+REGION = "us-east-1"
+
+
+def test_run_id_format():
+    assert re.fullmatch(r"xb-\d{8}T\d{6}Z-[0-9a-f]{4}", cli.new_run_id())
+
+
+def test_build_backends_respects_enable_flags():
+    cfg = load_config(None, {"enable_backends": ["itdog"], "disable_backends": ["globalping"]})
+    names = [b.name for b in cli.build_backends(cfg, ssm_runner=object())]
+    assert names == ["reverse", "itdog"]
+    cfg2 = load_config(None, {"backends": {"ripeatlas": {"enabled": True, "api_key": ""}}})
+    assert "ripeatlas" not in [b.name for b in cli.build_backends(cfg2, ssm_runner=object())]
+
+
+def test_dry_run_prints_plan_without_clients(capsys):
+    def no_factory(cfg):
+        raise AssertionError("dry-run must not create clients")
+    rc = cli.main(["select", "--dry-run", "--batch-size", "3", "--region", "ap-east-1"], factory=no_factory)
+    out = capsys.readouterr().out
+    assert rc == 0 and "DRY-RUN" in out and "ap-east-1" in out and "3 x t3.nano" in out and "reverse" in out
+
+
+def test_select_rejects_bad_override():
+    with pytest.raises(SystemExit):
+        cli.main(["select", "--dry-run", "--enable-backend", "nope"])
+
+
+@mock_aws
+def test_cleanup_terminates_only_run_and_keeps_infra(capsys):
+    ec2 = boto3.client("ec2", region_name=REGION)
+    iam = boto3.client("iam", region_name=REGION)
+    ssm = boto3.client("ssm", region_name=REGION)
+    # moto 5 预置 /aws/service/ 保留公共参数且禁止写入，ensure_infra 会直接读取其默认 AMI 值
+    from crossborder_selector.aws.infra import ensure_infra, SG_NAME
+    from crossborder_selector.aws.ec2 import Ec2Manager
+    cfg = load_config(None, {"region": REGION})
+    infra = ensure_infra(ec2, iam, ssm, cfg)
+    m = Ec2Manager(ec2, sleeper=lambda s: None)
+    a = m.launch(2, "xb-a", 1, infra, "t3.nano")
+    b = m.launch(1, "xb-b", 1, infra, "t3.nano")
+    factory = lambda cfg: {"ec2": ec2, "iam": iam, "ssm": ssm}
+    assert cli.main(["cleanup", "--region", REGION, "--run-id", "xb-a"], factory=factory) == 0
+    assert m.list_run_instances("xb-a") == [] and set(m.list_run_instances("xb-b")) == set(b)
+    assert ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SG_NAME]}])["SecurityGroups"]
+    assert cli.main(["cleanup", "--region", REGION, "--run-id", "xb-b", "--include-infra"], factory=factory) == 0
+    assert ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SG_NAME]}])["SecurityGroups"] == []
+
+
+def test_report_regenerates(tmp_path, capsys):
+    d = {"run_id": "xb-r", "region": "r", "started_at": "", "finished_at": "", "stop_reason": "x", "rounds_completed": 0,
+         "config": {}, "winners": [], "rounds": [], "candidates": [], "prefixes": {}}
+    out = tmp_path / "out" / "xb-r"
+    out.mkdir(parents=True)
+    (out / "report.json").write_text(json.dumps(d))
+    assert cli.main(["report", "--run-id", "xb-r", "--output-dir", str(tmp_path / "out")]) == 0
+    assert (out / "report.md").exists() and (out / "candidates.csv").exists()

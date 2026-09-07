@@ -107,11 +107,14 @@ def _do_select(args, factory) -> int:
         print(f"run failed: {e}. surviving run-id-tagged instances: {surviving}; "
               f"clean up with cleanup --run-id {run_id}", file=sys.stderr)
         return 1
-    paths = write_reports(result, cfg)
     print(f"stop reason: {result.stop_reason}")
     for w in result.winners:
         print(f"WINNER {w.candidate.instance_id} {w.candidate.public_ip} prefix={w.candidate.prefix} score={w.composite}")
-    print(f"reports: {paths['json']}  {paths['md']}  {paths['csv']}")
+    try:  # 报告写入失败不应掩盖 winner 信息
+        paths = write_reports(result, cfg)
+        print(f"reports: {paths['json']}  {paths['md']}  {paths['csv']}")
+    except Exception as e:
+        print(f"report failed: {e}", file=sys.stderr)
     print(f"run-id: {run_id}")
     return 0
 

@@ -67,6 +67,34 @@ def test_cleanup_terminates_only_run_and_keeps_infra(capsys):
     assert ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SG_NAME]}])["SecurityGroups"] == []
 
 
+def test_select_report_failure_still_prints_winners(monkeypatch, capsys):
+    from crossborder_selector.models import Candidate, CandidateScore
+    win = CandidateScore(Candidate("i-1", "1.2.3.4", prefix="1.2.0.0/16"), None, [], {}, {}, 91.0, True)
+
+    class FakeResult:
+        stop_reason = "max_rounds"
+        winners = [win]
+
+    class FakeOrch:
+        def __init__(self, *a, **k): pass
+        def run(self): return FakeResult()
+
+    monkeypatch.setattr(cli, "ensure_infra", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "load_ip_ranges", lambda **k: [])
+    monkeypatch.setattr(cli, "Orchestrator", FakeOrch)
+
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr(cli, "write_reports", boom)
+
+    factory = lambda cfg: {"ec2": object(), "iam": object(), "ssm": object()}
+    rc = cli.main(["select", "--region", "us-east-1", "--disable-backend", "globalping"], factory=factory)
+    cap = capsys.readouterr()
+    assert rc == 0
+    assert "WINNER i-1 1.2.3.4" in cap.out and "run-id:" in cap.out
+    assert "report failed: disk full" in cap.err
+
+
 def test_report_regenerates(tmp_path, capsys):
     d = {"run_id": "xb-r", "region": "r", "started_at": "", "finished_at": "", "stop_reason": "x", "rounds_completed": 0,
          "config": {}, "winners": [], "rounds": [], "candidates": [], "prefixes": {}}

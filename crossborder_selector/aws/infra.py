@@ -94,8 +94,17 @@ def ensure_infra(ec2, iam, ssm, cfg) -> Infra:
 
 def delete_infra(ec2, iam) -> None:
     """删除工具自建的 SG 与 IAM 资源。调用方负责先确认没有 winner 依赖。"""
-    for sg in ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SG_NAME]}])["SecurityGroups"]:
-        ec2.delete_security_group(GroupId=sg["GroupId"])
+    # 只删本工具打了 crossborder-managed=true 标签的 SG，避免误删同名的他人安全组
+    sgs = ec2.describe_security_groups(Filters=[
+        {"Name": "group-name", "Values": [SG_NAME]},
+        {"Name": "tag:crossborder-managed", "Values": ["true"]}])["SecurityGroups"]
+    for sg in sgs:
+        try:
+            ec2.delete_security_group(GroupId=sg["GroupId"])
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "DependencyViolation":
+                raise RuntimeError("security group still in use by shutting-down instances; retry in a minute")
+            raise
     try:
         iam.remove_role_from_instance_profile(InstanceProfileName=PROFILE_NAME, RoleName=ROLE_NAME)
     except ClientError:

@@ -81,6 +81,30 @@ def test_delete_infra_removes_managed_resources():
 
 
 @mock_aws
+def test_delete_infra_skips_unmanaged_same_name_sg():
+    ec2, iam, ssm = _clients()
+    _seed_ami(ssm, ec2)
+    # 另建一个同名但无 crossborder-managed 标签的 SG（模拟他人创建），delete_infra 不应删它
+    vpc = ec2.create_vpc(CidrBlock="10.7.0.0/16")["Vpc"]["VpcId"]
+    other = ec2.create_security_group(GroupName=SG_NAME, Description="not ours", VpcId=vpc)["GroupId"]
+    delete_infra(ec2, iam)
+    remaining = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SG_NAME]}])["SecurityGroups"]
+    assert [s["GroupId"] for s in remaining] == [other]
+
+
+def test_delete_infra_dependency_violation_raises_runtimeerror():
+    from botocore.exceptions import ClientError
+
+    class FakeEc2:
+        def describe_security_groups(self, Filters):
+            return {"SecurityGroups": [{"GroupId": "sg-1"}]}
+        def delete_security_group(self, GroupId):
+            raise ClientError({"Error": {"Code": "DependencyViolation", "Message": "in use"}}, "DeleteSecurityGroup")
+    with pytest.raises(RuntimeError, match="still in use"):
+        delete_infra(FakeEc2(), object())
+
+
+@mock_aws
 def test_resolve_ami_arm():
     ec2, iam, ssm = _clients()
     ami = _seed_ami(ssm, ec2, "arm64")

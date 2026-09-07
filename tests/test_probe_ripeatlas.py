@@ -36,6 +36,7 @@ class FakeHttp:
 def test_asn_mapping():
     assert isp_for_asn(4134) == "telecom" and isp_for_asn(4837) == "unicom"
     assert isp_for_asn(56046) == "mobile" and isp_for_asn(99999) == "other"
+    assert isp_for_asn(56043) == "mobile"
 
 
 def test_create_poll_and_map():

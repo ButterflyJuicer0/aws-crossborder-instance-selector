@@ -43,12 +43,19 @@ class FakeSession:
         return Resp(HTML)
 
 
+class FakeClock:
+    def __init__(self): self.t = 0.0
+    def __call__(self): return self.t
+    def tick(self, s): self.t += s
+
+
 class FakeWs:
-    def __init__(self, msgs): self.msgs, self.sent = list(msgs), []
+    def __init__(self, msgs): self.msgs, self.sent, self.timeouts = list(msgs), [], []
     def __enter__(self): return self
     def __exit__(self, *a): return False
     def send(self, s): self.sent.append(s)
-    def recv(self):
+    def recv(self, timeout=None):
+        self.timeouts.append(timeout)
         if not self.msgs:
             raise TimeoutError("closed")
         return self.msgs.pop(0)
@@ -79,3 +86,23 @@ def test_protocol_change_degrades_to_error():
     b = ItdogBackend(CFG, session=Broken(), ws_connect=lambda url: FakeWs([]))
     out = b.probe([Candidate("a", "1.1.1.1")])
     assert not out["1.1.1.1"].ok and "itdog" in out["1.1.1.1"].error
+
+
+def test_recv_timeout_and_deadline_return_partial_samples():
+    clk = FakeClock()
+
+    class TimingWs(FakeWs):
+        def recv(self, timeout=None):
+            self.timeouts.append(timeout)
+            clk.tick(10)  # 每次 recv 推进 10s：先返回一条样本，之后一直超时直到触及 deadline
+            if self.msgs:
+                return self.msgs.pop(0)
+            raise TimeoutError("idle")
+
+    ws = TimingWs([json.dumps({"type": "data", "ip": "1.1.1.1", "result": "45", "node_id": "1310"})])
+    b = ItdogBackend({**CFG, "timeout_s": 30}, session=FakeSession(), ws_connect=lambda url: ws, clock=clk)
+    out = b.probe([Candidate("a", "1.1.1.1")])
+    pr = out["1.1.1.1"]
+    assert pr.ok and len(pr.probes) == 1  # 超时前收到的样本被保留
+    assert ws.timeouts[0] <= 2.0          # recv 的读超时被 deadline 收敛到 <= 2s
+    # probe() 能返回本身就证明循环已终止，没有永久阻塞

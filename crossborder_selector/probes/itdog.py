@@ -66,10 +66,13 @@ class ItdogBackend(ProbeBackend):
         deadline = self._now() + self.cfg["timeout_s"]
         with self.ws_connect(wss_url) as ws:
             ws.send(json.dumps({"task_id": task_id, "task_token": task_token(task_id)}))
-            while self._now() < deadline:
+            while True:
+                remaining = deadline - self._now()
+                if remaining <= 0:
+                    break
                 try:
-                    msg = json.loads(ws.recv())
-                except (TimeoutError, OSError, ValueError):
+                    msg = json.loads(ws.recv(timeout=min(2.0, remaining)))
+                except Exception:  # 超时、连接被服务端关闭（ConnectionClosed）或非法 JSON 都视为流结束，保留已收到的样本
                     break
                 if msg.get("type") == "finished":
                     break

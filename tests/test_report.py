@@ -32,6 +32,8 @@ def test_to_dict_shape():
     assert r1["kept"] is True and r1["reverse_telecom"] == 50.0 and r1["globalping_HK"] == 20.0 and r1["ripeatlas_telecom"] is None
     assert d["prefixes"]["18.162.0.0/16"]["samples"] == 1 and d["prefixes"]["18.162.0.0/16"]["best_composite"] == 88.5
     assert d["config"]["batch_size"] == 10 and "abuseipdb_api_key" not in json.dumps(d["config"])
+    # globalping api_token 也必须被脱敏
+    assert "api_token" not in json.dumps(d["config"])
 
 
 def test_markdown_mentions_winner_and_warning():

@@ -28,8 +28,8 @@ def _finished(ip):
 class FakeHttp:
     def __init__(self, polls_before_finish=1):
         self.calls, self.n = [], polls_before_finish
-    def __call__(self, method, url, body=None):
-        self.calls.append((method, url, body))
+    def __call__(self, method, url, body=None, headers=None):
+        self.calls.append((method, url, body, headers or {}))
         if method == "POST":
             return {"id": "m1", "probesCount": 3}
         self.n -= 1
@@ -40,7 +40,7 @@ def test_request_body_and_parsing():
     clk, http = FakeClock(), FakeHttp()
     b = GlobalpingBackend(CFG, http=http, sleeper=clk.sleep, clock=clk)
     out = b.probe([Candidate("i-1", "18.162.1.1")])
-    m, url, body = http.calls[0]
+    m, url, body, _hdrs = http.calls[0]
     assert m == "POST" and url == f"{API_BASE}/measurements"
     assert body["type"] == "ping" and body["target"] == "18.162.1.1"
     assert body["locations"] == [{"country": "HK", "limit": 2}, {"country": "TW", "limit": 2}]
@@ -59,10 +59,23 @@ def test_timeout_yields_error():
 
 
 def test_http_error_isolated_per_candidate():
-    def http(m, u, b=None):
+    def http(m, u, b=None, headers=None):
         if b and b["target"] == "2.2.2.2":
             raise RuntimeError("429 too many")
         return {"id": "m1"} if m == "POST" else _finished("x")
     clk = FakeClock()
     out = GlobalpingBackend(CFG, http=http, sleeper=clk.sleep, clock=clk).probe([Candidate("a", "1.1.1.1"), Candidate("b", "2.2.2.2")])
     assert out["1.1.1.1"].ok and "429" in out["2.2.2.2"].error
+
+
+def test_no_auth_header_without_token():
+    clk, http = FakeClock(), FakeHttp()
+    GlobalpingBackend(CFG, http=http, sleeper=clk.sleep, clock=clk).probe([Candidate("i-1", "1.1.1.1")])
+    assert all("Authorization" not in hdrs for _, _, _, hdrs in http.calls)
+
+
+def test_sends_bearer_token_when_configured():
+    clk, http = FakeClock(), FakeHttp()
+    GlobalpingBackend({**CFG, "api_token": "secret"}, http=http, sleeper=clk.sleep, clock=clk).probe(
+        [Candidate("i-1", "1.1.1.1")])
+    assert http.calls and all(hdrs.get("Authorization") == "Bearer secret" for _, _, _, hdrs in http.calls)

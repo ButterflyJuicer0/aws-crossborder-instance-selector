@@ -9,9 +9,10 @@ from crossborder_selector.probes.base import ProbeBackend
 API_BASE = "https://api.globalping.io/v1"
 
 
-def _default_http(method, url, body=None):
-    r = requests.request(method, url, json=body, timeout=20,
-                         headers={"Content-Type": "application/json", "User-Agent": "crossborder-selector"})
+def _default_http(method, url, body=None, headers=None):
+    base = {"Content-Type": "application/json", "User-Agent": "crossborder-selector"}
+    base.update(headers or {})
+    r = requests.request(method, url, json=body, timeout=20, headers=base)
     r.raise_for_status()
     return r.json()
 
@@ -22,16 +23,19 @@ class GlobalpingBackend(ProbeBackend):
     def __init__(self, backend_cfg, http=None, sleeper=time.sleep, clock=time.time, poll_s=2):
         self.cfg, self.http = backend_cfg, http or _default_http
         self._sleep, self._now, self.poll_s = sleeper, clock, poll_s
+        token = (self.cfg.get("api_token") or "").strip()
+        # 带 token 时速率上限从 250 tests/h 提升到 500 tests/h
+        self.headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     def _measure(self, ip) -> ProbeResult:
         body = {"type": "ping", "target": ip,
                 "locations": [{"country": c, "limit": self.cfg["limit_per_location"]} for c in self.cfg["locations"]],
                 "measurementOptions": {"packets": self.cfg["packets"]}}
-        mid = self.http("POST", f"{API_BASE}/measurements", body)["id"]
+        mid = self.http("POST", f"{API_BASE}/measurements", body, headers=self.headers)["id"]
         deadline = self._now() + self.cfg["timeout_s"]
         while True:
             self._sleep(self.poll_s)
-            data = self.http("GET", f"{API_BASE}/measurements/{mid}")
+            data = self.http("GET", f"{API_BASE}/measurements/{mid}", headers=self.headers)
             if data.get("status") == "finished":
                 break
             if self._now() >= deadline:

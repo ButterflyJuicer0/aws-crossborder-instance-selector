@@ -35,8 +35,8 @@ DEFAULTS = {
                 "mobile": ["221.130.33.52:53", "www.10086.cn"],
             },
         },
-        "globalping": {"enabled": True, "locations": ["HK", "TW"], "limit_per_location": 3,
-                       "packets": 4, "timeout_s": 60},
+        "globalping": {"enabled": True, "locations": ["HK", "TW"], "limit_per_location": 2,
+                       "packets": 4, "timeout_s": 60, "api_token": ""},
         "ripeatlas": {"enabled": False, "api_key": "", "probe_count": 10, "packets": 4,
                       "timeout_s": 120},
         "itdog": {

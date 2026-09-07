@@ -11,7 +11,7 @@ BACKEND_ISP_COLUMNS = [("reverse", i) for i in ISPS] + [("globalping", "HK"), ("
                       [("ripeatlas", i) for i in ISPS] + [("itdog", i) for i in ISPS]
 CSV_COLUMNS = ["run_id", "round", "instance_id", "public_ip", "prefix", "reputation_score", "veto_reason",
                "composite", "qualified"] + [f"{b}_{i}" for b, i in BACKEND_ISP_COLUMNS] + ["kept", "terminated"]
-_SECRET_KEYS = {"api_key", "abuseipdb_api_key"}
+_SECRET_KEYS = {"api_key", "abuseipdb_api_key", "api_token"}
 
 
 def _redact(obj):

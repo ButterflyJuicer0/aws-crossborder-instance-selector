@@ -123,3 +123,48 @@ def test_protect_flag_and_exception_cleanup():
     with pytest.raises(RuntimeError):
         orch.run()
     assert set(ec2c.terminated) == {"i-1", "i-2"}
+
+
+def test_keyboard_interrupt_terminates_all_and_propagates():
+    ec2 = FakeEc2(["10.0.0.1", "10.0.0.2"])
+
+    class Interrupt(ProbeBackend):
+        name = "reverse"
+        def probe(self, cands):
+            raise KeyboardInterrupt()
+    orch = Orchestrator(_cfg(max_rounds=1), ec2, FakeSsm(), [Interrupt()], [], lambda ip: "", INFRA, "xb-t", log=lambda *a: None)
+    with pytest.raises(KeyboardInterrupt):
+        orch.run()
+    assert set(ec2.terminated) == {"i-1", "i-2"} and ec2.winners == []
+
+
+def test_launch_failure_in_later_round_keeps_incumbent():
+    from botocore.exceptions import ClientError
+
+    class FailingEc2(FakeEc2):
+        def launch(self, n, run_id, round_no, infra, instance_type):
+            if round_no >= 2:
+                raise ClientError({"Error": {"Code": "InsufficientInstanceCapacity",
+                                             "Message": "no capacity"}}, "RunInstances")
+            return super().launch(n, run_id, round_no, infra, instance_type)
+    ec2 = FailingEc2(["10.0.0.1", "10.0.0.2"])
+    be = ScriptedBackend({"10.0.0.1": 100.0, "10.0.0.2": 120.0})
+    orch = Orchestrator(_cfg(), ec2, FakeSsm(), [be], [], lambda ip: "", INFRA, "xb-t", log=lambda *a: None)
+    rr = orch.run()
+    assert rr.stop_reason == "launch_failed" and len(rr.rounds) == 2
+    assert "launch" in rr.rounds[1].backend_errors
+    # 上一轮在位者被保留为 winner，未被牵连终止
+    incumbent = rr.rounds[0].kept[0].candidate.instance_id
+    assert rr.winners[0].candidate.instance_id == incumbent
+    assert ec2.winners[0][0] == incumbent and incumbent not in ec2.terminated
+
+
+def test_first_round_launch_failure_reraises():
+    from botocore.exceptions import ClientError
+
+    class FailingEc2(FakeEc2):
+        def launch(self, n, run_id, round_no, infra, instance_type):
+            raise ClientError({"Error": {"Code": "InsufficientInstanceCapacity", "Message": "x"}}, "RunInstances")
+    orch = Orchestrator(_cfg(), FailingEc2([]), FakeSsm(), [ScriptedBackend({})], [], lambda ip: "", INFRA, "xb-t", log=lambda *a: None)
+    with pytest.raises(ClientError):
+        orch.run()

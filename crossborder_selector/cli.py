@@ -93,13 +93,19 @@ def _do_select(args, factory) -> int:
     infra = ensure_infra(clients["ec2"], clients["iam"], clients["ssm"], cfg)
     ssm_runner = SsmRunner(clients["ssm"])
     prefixes = load_ip_ranges(cache_path=os.path.join(cfg.output_dir, "ip-ranges.json"))
-    orch = Orchestrator(cfg, Ec2Manager(clients["ec2"]), ssm_runner, build_backends(cfg, ssm_runner),
+    ec2mgr = Ec2Manager(clients["ec2"])
+    orch = Orchestrator(cfg, ec2mgr, ssm_runner, build_backends(cfg, ssm_runner),
                         build_sources(cfg.reputation), PrefixLookup(prefixes, cfg.region), infra, run_id)
     try:
         result = orch.run()
+    except KeyboardInterrupt:
+        leftovers = ec2mgr.list_run_instances(run_id)
+        print(f"interrupted; run cleanup --run-id {run_id} to terminate leftovers: {leftovers}", file=sys.stderr)
+        return 130
     except Exception as e:
-        print(f"run failed: {e}. Non-winner instances were terminated; verify with cleanup --run-id {run_id}",
-              file=sys.stderr)
+        surviving = ec2mgr.list_run_instances(run_id)
+        print(f"run failed: {e}. surviving run-id-tagged instances: {surviving}; "
+              f"clean up with cleanup --run-id {run_id}", file=sys.stderr)
         return 1
     paths = write_reports(result, cfg)
     print(f"stop reason: {result.stop_reason}")

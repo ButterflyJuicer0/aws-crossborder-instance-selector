@@ -11,6 +11,9 @@ def test_defaults_without_file():
     assert cfg.backends["reverse"]["enabled"] is True
     assert cfg.backends["ripeatlas"]["enabled"] is False
     assert set(cfg.weights["isps"]) == set(ISPS)
+    # 三网 DNS 目标默认走 :53（host:port 形式）
+    assert cfg.backends["reverse"]["targets"]["telecom"] == ["114.114.114.114:53", "www.189.cn"]
+    assert cfg.backends["reverse"]["targets"]["mobile"] == ["221.130.33.52:53", "www.10086.cn"]
 
 
 def test_file_deep_merges_over_defaults(tmp_path):

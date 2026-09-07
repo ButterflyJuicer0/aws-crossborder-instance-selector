@@ -34,16 +34,17 @@ backends:
     tcping_count: 5
     tcping_port: 443
     timeout_s: 120
-    # 三网回程探测目标（每个 ISP 至少一个）
+    # 三网回程探测目标（每个 ISP 至少一个）。可写 host 或 host:port；
+    # ping 只用 host 部分，tcping 用条目端口（下面纯 IP 是三网 DNS，走 53），域名回退到 tcping_port
     targets:
       telecom:
-      - 114.114.114.114
+      - '114.114.114.114:53'
       - www.189.cn
       unicom:
-      - 123.123.123.123
+      - '123.123.123.123:53'
       - www.10010.com
       mobile:
-      - 221.130.33.52
+      - '221.130.33.52:53'
       - www.10086.cn
   globalping:
     enabled: true

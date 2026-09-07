@@ -2,16 +2,22 @@ import json
 from crossborder_selector.models import Candidate
 from crossborder_selector.probes.reverse import build_script, parse_output, ReverseBackend
 
-TARGETS = {"telecom": ["114.114.114.114"], "unicom": ["123.123.123.123"], "mobile": ["221.130.33.52"]}
+TARGETS = {"telecom": ["114.114.114.114:53", "www.189.cn"], "unicom": ["123.123.123.123:53"],
+           "mobile": ["221.130.33.52:53"]}
 CFG = {"enabled": True, "ping_count": 4, "tcping_count": 2, "tcping_port": 443, "timeout_s": 60, "targets": TARGETS}
 
 
 def test_build_script_mentions_every_target_and_marker():
     s = build_script(TARGETS, 4, 2, 443)
-    for t in ("114.114.114.114", "123.123.123.123", "221.130.33.52"):
+    for t in ("114.114.114.114", "123.123.123.123", "221.130.33.52", "www.189.cn"):
         assert t in s
     # 脚本用 ping -c "$3"，计数经 probe_ping 位置参数传入，故不会出现字面量 "ping -c 4"
+    # ping 只用 host 部分（去掉 :port）
     assert 'ping -c "$3"' in s and 'probe_ping "telecom" "114.114.114.114" 4' in s
+    assert 'probe_ping "telecom" "www.189.cn" 4' in s
+    # tcping 用条目自带端口（53），域名条目回退到默认 tcping_port（443）
+    assert 'probe_tcp "telecom" "114.114.114.114" 53 ' in s
+    assert 'probe_tcp "telecom" "www.189.cn" 443 ' in s
     assert "/dev/tcp/" in s and "CROSSBORDER_JSON:" in s
     assert "set -e" not in s  # 单目标失败不能中断脚本
 

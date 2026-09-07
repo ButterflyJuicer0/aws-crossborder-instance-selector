@@ -111,10 +111,10 @@ backends:
     ping_count: 10
     tcping_count: 5
     tcping_port: 443
-    targets:
-      telecom: ["114.114.114.114", "www.189.cn"]
-      unicom:  ["123.123.123.123", "www.10010.com"]
-      mobile:  ["221.130.33.52", "www.10086.cn"]
+    targets:                                   # 条目可为 host 或 host:port
+      telecom: ["114.114.114.114:53", "www.189.cn"]
+      unicom:  ["123.123.123.123:53", "www.10010.com"]
+      mobile:  ["221.130.33.52:53", "www.10086.cn"]
   globalping:
     enabled: true
     locations: ["HK", "TW"]
@@ -235,6 +235,7 @@ prefix 只记录，不参与打分。报告与历史文件按 prefix 汇总均�
 
 在候选机上经 SSM `AWS-RunShellScript` 执行一段生成的 bash：
 
+- 目标条目可为 `host` 或 `host:port`；ping 始终只用 host 部分，tcping 用条目端口，未给端口则回退到 `tcping_port`。
 - 对每个目标：`ping -c <ping_count> -W 2`，解析 `received` 与 rtt 中位数（用 `-D` 时间戳或直接解析 summary 行的 avg，取 avg 作为近似中位数）。
 - tcping：`for i in 1..tcping_count; do timeout 3 bash -c "echo > /dev/tcp/<host>/<port>"` 记录成功次数和耗时（`date +%s%N` 差值）。
 - 输出一行 JSON，SSM 结果里以 `CROSSBORDER_JSON:` 前缀标记，便于解析。

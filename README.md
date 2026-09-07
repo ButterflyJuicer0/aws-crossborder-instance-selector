@@ -46,6 +46,8 @@ select
 | ripeatlas | 大陆在线探针 → 候选 IP | 关 | 是 | 大陆在线探针数量少，覆盖有限 |
 | itdog | 三网家宽 → 候选 IP | 关 | 否 | 非官方接口，随时可能失效；仅失败降级不阻塞 |
 
+reverse 的 `targets` 每项可写 `host` 或 `host:port`：ping 只用 host 部分，tcping 用条目端口、未给则回退到 `tcping_port`。默认三网目标里纯 IP 是运营商公共 DNS（走 53），域名走 `tcping_port`（443），避免对 DNS 服务器 tcping 443 得到结构性零分。
+
 ## 5. 打分
 
 先做硬否决：信誉命中、reverse 三网全丢包、或有效 backend 数 < `min_backends`，任一成立即淘汰。子分按每个探针计算 `100 × (1 − 丢包率) × 延迟因子`，延迟因子在 `lat_good_ms`~`lat_bad_ms` 间线性衰减。backend 分先按三网权重 `weights.isps` 合并，composite 再按 `weights.backends` 加权，只对返回有效数据的 backend 归一化，缺失不计零分。排序键为 `(qualified, composite, reverse 分)` 降序。prefix 只记录、不参与打分。

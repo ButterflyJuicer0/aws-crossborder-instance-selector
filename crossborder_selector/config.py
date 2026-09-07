@@ -28,10 +28,11 @@ DEFAULTS = {
             "tcping_count": 5,
             "tcping_port": 443,
             "timeout_s": 120,
+            # 目标可写 host 或 host:port；纯 IP 是三网 DNS 服务器（走 53），域名走默认 tcping_port
             "targets": {
-                "telecom": ["114.114.114.114", "www.189.cn"],
-                "unicom": ["123.123.123.123", "www.10010.com"],
-                "mobile": ["221.130.33.52", "www.10086.cn"],
+                "telecom": ["114.114.114.114:53", "www.189.cn"],
+                "unicom": ["123.123.123.123:53", "www.10010.com"],
+                "mobile": ["221.130.33.52:53", "www.10086.cn"],
             },
         },
         "globalping": {"enabled": True, "locations": ["HK", "TW"], "limit_per_location": 3,

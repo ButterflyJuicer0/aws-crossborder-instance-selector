@@ -33,12 +33,21 @@ probe_tcp() { # isp host port count
 '''
 
 
+def split_target(entry: str, default_port: int):
+    """目标项可为 host 或 host:port。ping 只用 host 部分；tcping 用给定端口，否则用默认端口。"""
+    host, sep, port = entry.rpartition(":")
+    if sep and port.isdigit():
+        return host, int(port)
+    return entry, int(default_port)
+
+
 def build_script(targets: dict, ping_count: int, tcping_count: int, tcping_port: int) -> str:
     lines = [_SCRIPT_HEAD]
     for isp, hosts in targets.items():
-        for h in hosts:
-            lines.append(f'probe_ping "{isp}" "{h}" {int(ping_count)}')
-            lines.append(f'probe_tcp "{isp}" "{h}" {int(tcping_port)} {int(tcping_count)}')
+        for entry in hosts:
+            host, port = split_target(entry, tcping_port)
+            lines.append(f'probe_ping "{isp}" "{host}" {int(ping_count)}')
+            lines.append(f'probe_tcp "{isp}" "{host}" {port} {int(tcping_count)}')
     lines.append(f'echo "{MARKER}[$out]"')
     return "\n".join(lines) + "\n"
 

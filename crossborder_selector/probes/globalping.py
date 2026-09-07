@@ -38,8 +38,11 @@ class GlobalpingBackend(ProbeBackend):
                 return ProbeResult(self.name, [], f"globalping timeout for measurement {mid}")
         probes = []
         for r in data.get("results", []):
-            st = (r.get("result") or {}).get("stats") or {}
-            probes.append(IspProbe(isp=r["probe"]["location"]["country"], sent=int(st.get("total") or 0),
+            result = r.get("result") or {}
+            if result.get("status") != "finished":
+                continue  # 离线/失败探针没有 stats，跳过而非记为 100% 丢包
+            st = result.get("stats") or {}
+            probes.append(IspProbe(isp=r["probe"]["country"], sent=int(st.get("total") or 0),
                                    received=int(st.get("rcv") or 0),
                                    median_rtt_ms=(None if st.get("avg") is None else float(st["avg"])),
                                    target=ip, method="ping"))

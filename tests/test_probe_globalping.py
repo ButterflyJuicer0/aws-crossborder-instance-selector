@@ -10,11 +10,18 @@ class FakeClock:
     def sleep(self, s): self.t += s
 
 
+def _probe(country):
+    # 真实 API 的 probe 是扁平 ProbeLocation，country 在顶层
+    return {"continent": "AS", "region": "Eastern Asia", "country": country, "state": None,
+            "city": "Hong Kong" if country == "HK" else "Taipei", "asn": 4760, "network": "example net"}
+
+
 def _finished(ip):
     return {"id": "m1", "status": "finished", "results": [
-        {"probe": {"location": {"country": "HK"}}, "result": {"status": "finished", "stats": {"total": 4, "rcv": 4, "avg": 12.5}}},
-        {"probe": {"location": {"country": "HK"}}, "result": {"status": "finished", "stats": {"total": 4, "rcv": 3, "avg": 15.0}}},
-        {"probe": {"location": {"country": "TW"}}, "result": {"status": "finished", "stats": {"total": 4, "rcv": 0, "avg": None}}},
+        {"probe": _probe("HK"), "result": {"status": "finished", "stats": {"total": 4, "rcv": 4, "avg": 12.5}}},
+        {"probe": _probe("HK"), "result": {"status": "finished", "stats": {"total": 4, "rcv": 3, "avg": 15.0}}},
+        {"probe": _probe("TW"), "result": {"status": "finished", "stats": {"total": 4, "rcv": 0, "avg": None}}},
+        {"probe": _probe("TW"), "result": {"status": "offline"}},  # 离线探针无 stats，必须被跳过
     ]}
 
 
@@ -39,7 +46,8 @@ def test_request_body_and_parsing():
     assert body["locations"] == [{"country": "HK", "limit": 2}, {"country": "TW", "limit": 2}]
     assert body["measurementOptions"] == {"packets": 4}
     pr = out["18.162.1.1"]
-    assert pr.ok and [p.isp for p in pr.probes] == ["HK", "HK", "TW"]
+    # 离线的第 4 个 TW 结果被跳过，只保留 3 个 finished 探针
+    assert pr.ok and len(pr.probes) == 3 and [p.isp for p in pr.probes] == ["HK", "HK", "TW"]
     assert pr.probes[0].median_rtt_ms == 12.5 and pr.probes[2].received == 0 and pr.probes[2].median_rtt_ms is None
 
 

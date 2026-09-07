@@ -67,7 +67,7 @@ python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
 
 ## 6. 启用可选 backend
 
-- ripeatlas：需在 `config.yaml` 的 `backends.ripeatlas` 填 `api_key` 并保证账户有 credits（申请见 https://atlas.ripe.net/docs/getting-started/credits ），填好后自动启用。
+- ripeatlas：需在 `config.yaml` 的 `backends.ripeatlas` 填 `api_key` 并保证账户有 credits（申请见 https://atlas.ripe.net/docs/getting-started/credits ），填好后自动启用。注意 RIPE Atlas 的 one-off 测量结果通常要数分钟才齐，默认 `timeout_s: 120` 可能只拿到部分探针结果；需要更完整覆盖时可调大该值。
 - itdog：`scripts/find_best_instance.sh ap-east-1 20 3 1 --enable-backend itdog`。注意 itdog 为非官方 WebSocket 接口，随时可能失效，失败只降级不阻塞本轮。
 
 ## 7. 清理

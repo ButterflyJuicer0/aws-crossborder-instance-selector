@@ -281,7 +281,7 @@ prefix 只记录，不参与打分。报告与历史文件按 prefix 汇总均�
 
 - `report.json`：run 元数据（region、config 摘要、开始/结束时间、轮数）、每轮 RoundResult、最终 winners、backend_errors、prefix 汇总。
 - `report.md`：人读摘要：winners 表（instance id、IP、prefix、composite、三网分）、每轮淘汰概览、备注（不要 stop 该实例；如何删除 winner 标签等）。
-- `candidates.csv`：一行一个候选，列：run_id、round、instance_id、public_ip、prefix、reputation_score、veto_reason、composite、qualified、reverse_telecom、reverse_unicom、reverse_mobile、globalping_HK、globalping_TW、ripeatlas_telecom、ripeatlas_unicom、ripeatlas_mobile、itdog_telecom、itdog_unicom、itdog_mobile、kept、terminated_at。缺失填空。
+- `candidates.csv`：一行一个候选，列：run_id、round、instance_id、public_ip、prefix、reputation_score、veto_reason、composite、qualified、reverse_telecom、reverse_unicom、reverse_mobile、globalping_HK、globalping_TW、ripeatlas_telecom、ripeatlas_unicom、ripeatlas_mobile、itdog_telecom、itdog_unicom、itdog_mobile、kept、terminated（布尔）。缺失填空。
 
 `history/prefix_stats.json`：`{prefix: {samples, mean_composite, best_composite, last_seen}}`，每次 run 结束合并更新。`report --run-id` 子命令可从 report.json 重新生成 md/csv。
 

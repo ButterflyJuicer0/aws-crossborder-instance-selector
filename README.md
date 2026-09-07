@@ -28,7 +28,7 @@ select
  │         reverse    候选机经 SSM 对三网目标 ping + tcping     默认开启
  │         globalping 从 HK/TW 公共探针打候选 IP                  默认开启
  │         ripeatlas  从大陆在线探针 ping 候选 IP                 配置 API key 后开启
- │         itdog      三网家宽视角 ping/tcping 候选 IP            显式开启才用
+ │         itdog      三网家宽视角 ping 候选 IP                   显式开启才用
  │    ⑤ 打分 → 与在位 winner 合并 → 全局 Top-K 保留，其余终止
  │    ⑥ best_score >= target_score 或 round == max_rounds → 停止
  ├─ winner 处理：删除 crossborder-run-id 标签；打 crossborder-winner=true、
@@ -44,7 +44,7 @@ select
 | reverse | 候选机 → 大陆三网机房（出境近似） | 开 | 否 | 探测机房而非家宽，ICMP 可能被限速；建议 finalists 用 itdog 复核 |
 | globalping | HK/TW 公共探针 → 候选 IP | 开 | 否 | 无中国大陆探针，只反映港台质量 |
 | ripeatlas | 大陆在线探针 → 候选 IP | 关 | 是 | 大陆在线探针数量少，覆盖有限 |
-| itdog | 三网家宽 → 候选 IP | 关 | 否 | 非官方接口，随时可能失效；仅失败降级不阻塞 |
+| itdog | 三网家宽 → 候选 IP（仅 ping） | 关 | 否 | 非官方接口，随时可能失效；只做 ping 不做 tcping；仅失败降级不阻塞 |
 
 reverse 的 `targets` 每项可写 `host` 或 `host:port`：ping 只用 host 部分，tcping 用条目端口、未给则回退到 `tcping_port`。默认三网目标里纯 IP 是运营商公共 DNS（走 53），域名走 `tcping_port`（443），避免对 DNS 服务器 tcping 443 得到结构性零分。
 
@@ -56,7 +56,8 @@ globalping 公共 API 匿名限速约 250 tests/h；在 `backends.globalping.api
 
 ## 6. 前置条件
 
-- AWS 凭证需具备 EC2 / IAM / SSM 权限，最小 action 清单：`ec2:RunInstances`、`ec2:Describe*`、`ec2:TerminateInstances`、`ec2:CreateTags`、`ec2:DeleteTags`、`ec2:CreateSecurityGroup`、`ec2:ModifyInstanceAttribute`、`iam:CreateRole`、`iam:AttachRolePolicy`、`iam:CreateInstanceProfile`、`iam:AddRoleToInstanceProfile`、`iam:PassRole`、`iam:Get*`、`ssm:SendCommand`、`ssm:GetCommandInvocation`、`ssm:DescribeInstanceInformation`、`ssm:GetParameters`。
+- AWS 凭证需具备 EC2 / IAM / SSM 权限，最小 action 清单：`ec2:RunInstances`、`ec2:Describe*`、`ec2:TerminateInstances`、`ec2:CreateTags`、`ec2:DeleteTags`、`ec2:CreateSecurityGroup`、`ec2:ModifyInstanceAttribute`、`iam:CreateRole`、`iam:AttachRolePolicy`、`iam:CreateInstanceProfile`、`iam:AddRoleToInstanceProfile`、`iam:TagRole`、`iam:TagInstanceProfile`、`iam:PassRole`、`iam:Get*`、`ssm:SendCommand`、`ssm:GetCommandInvocation`、`ssm:DescribeInstanceInformation`、`ssm:GetParameters`。
+- 仅 `cleanup --include-infra` 删除共享基础设施时额外需要：`ec2:DeleteSecurityGroup`、`iam:RemoveRoleFromInstanceProfile`、`iam:DeleteInstanceProfile`、`iam:DetachRolePolicy`、`iam:DeleteRole`。
 - 目标 Region 存在默认 VPC（否则在 `config.yaml` 手工指定 `subnet_id` 与 `security_group_id`）。
 - 该 Region vCPU 配额 ≥ `batch_size × 2`，避免 RunInstances 被限额缩批。
 

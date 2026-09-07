@@ -90,4 +90,4 @@ class RunResult:
     winners: list             # list[CandidateScore]
     started_at: str
     finished_at: str
-    stop_reason: str          # target_score_reached / max_rounds / error
+    stop_reason: str          # target_score_reached / max_rounds / no_qualified / launch_failed

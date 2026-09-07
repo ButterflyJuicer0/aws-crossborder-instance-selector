@@ -168,3 +168,30 @@ def test_first_round_launch_failure_reraises():
     orch = Orchestrator(_cfg(), FailingEc2([]), FakeSsm(), [ScriptedBackend({})], [], lambda ip: "", INFRA, "xb-t", log=lambda *a: None)
     with pytest.raises(ClientError):
         orch.run()
+
+
+def test_empty_public_ip_is_vetoed_before_reputation():
+    ec2 = FakeEc2(["", "10.0.0.2"])
+    orch = Orchestrator(_cfg(max_rounds=1), ec2, FakeSsm(), [ScriptedBackend({"10.0.0.2": 30.0})],
+                        [], lambda ip: "", INFRA, "xb-t", log=lambda *a: None)
+    rr = orch.run()
+    veto = {v.candidate.instance_id: v.veto_reason for v in rr.rounds[0].vetoed}
+    assert veto.get("i-1") == "no_public_ip" and "i-1" in ec2.terminated
+    assert rr.winners[0].candidate.instance_id == "i-2"
+
+
+def test_no_survivors_skips_probing():
+    ec2 = FakeEc2(["", ""])
+
+    class BoomSsm:
+        def wait_online(self, ids, t):
+            raise AssertionError("must not wait_online when there are no survivors")
+
+    class BoomBackend(ProbeBackend):
+        name = "reverse"
+        def probe(self, cands):
+            raise AssertionError("must not probe when there are no survivors")
+    orch = Orchestrator(_cfg(max_rounds=1), ec2, BoomSsm(), [BoomBackend()], [], lambda ip: "", INFRA, "xb-t", log=lambda *a: None)
+    rr = orch.run()
+    assert rr.stop_reason == "no_qualified" and rr.winners == []
+    assert rr.rounds[0].scored == [] and set(ec2.terminated) == {"i-1", "i-2"}

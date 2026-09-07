@@ -67,6 +67,9 @@ class Orchestrator:
 
             vetoed, survivors = [], []
             for c in cands:
+                if not c.public_ip:  # 未拿到公网 IP：无法探测，直接否决
+                    vetoed.append(CandidateScore(c, None, [], {}, {}, 0.0, False, "no_public_ip"))
+                    continue
                 rep = score_reputation(c.public_ip, self.rep_sources)
                 if rep.any_listed:
                     vetoed.append(CandidateScore(c, rep, [], {}, {}, 0.0, False, "reputation"))
@@ -75,10 +78,13 @@ class Orchestrator:
             self.ec2.terminate([v.candidate.instance_id for v in vetoed])
             terminated += [v.candidate.instance_id for v in vetoed]
 
-            online = self.ssm.wait_online([c.instance_id for c, _ in survivors], self.cfg.ssm_online_timeout_s)
-            for c, _ in survivors:
-                c.ssm_online = c.instance_id in online
-            results, errors = run_backends(self.backends, [c for c, _ in survivors])
+            if survivors:
+                online = self.ssm.wait_online([c.instance_id for c, _ in survivors], self.cfg.ssm_online_timeout_s)
+                for c, _ in survivors:
+                    c.ssm_online = c.instance_id in online
+                results, errors = run_backends(self.backends, [c for c, _ in survivors])
+            else:  # 无幸存者：跳过上线等待与拨测
+                results, errors = {}, {}
             scored = [score_candidate(c, rep, results.get(c.public_ip, []), self.cfg.weights,
                                       self.cfg.min_backends, self.reverse_enabled) for c, rep in survivors]
 

@@ -23,7 +23,7 @@ class Ec2Manager:
         for _ in range(6):
             try:
                 r = self.ec2.run_instances(
-                    ImageId=infra.image_id, InstanceType=instance_type, MinCount=n, MaxCount=n,
+                    ImageId=infra.image_id, InstanceType=instance_type, MinCount=1, MaxCount=n,
                     IamInstanceProfile={"Name": infra.instance_profile_name},
                     NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": infra.subnet_id,
                                         "Groups": [infra.security_group_id],

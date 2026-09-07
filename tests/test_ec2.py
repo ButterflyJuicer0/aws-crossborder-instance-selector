@@ -28,7 +28,8 @@ def test_launch_tags_and_public_ips():
     ec2, infra = _setup()
     m = Ec2Manager(ec2, sleeper=lambda s: None)
     ids = m.launch(3, "xb-run1", 2, infra, "t3.nano")
-    assert len(ids) == 3
+    # moto 只启动 MinCount 台（=1），真实 AWS 会启动到 MaxCount；两者都合法
+    assert 1 <= len(ids) <= 3
     m.wait_running(ids)
     ips = m.public_ips(ids)
     assert set(ips) == set(ids) and all(ips.values())
@@ -68,3 +69,19 @@ def test_protect_sets_both_attributes():
     (iid,) = m.launch(1, "xb-p", 1, infra, "t3.nano")
     m.protect(iid)
     assert ec2.describe_instance_attribute(InstanceId=iid, Attribute="disableApiTermination")["DisableApiTermination"]["Value"] is True
+
+
+def test_launch_requests_full_batch_with_min_one():
+    # 用假客户端断言下发给 RunInstances 的参数，不经过 moto 的 MinCount 行为
+    class FakeEc2:
+        def __init__(self):
+            self.kw = None
+        def run_instances(self, **kw):
+            self.kw = kw
+            return {"Instances": [{"InstanceId": f"i-{i}"} for i in range(kw["MaxCount"])]}
+    fake = FakeEc2()
+    m = Ec2Manager(fake, sleeper=lambda s: None)
+    infra = Infra("subnet-x", "sg-x", "profile-x", "ami-x")
+    ids = m.launch(3, "xb-run1", 2, infra, "t3.nano")
+    assert fake.kw["MinCount"] == 1 and fake.kw["MaxCount"] == 3
+    assert len(ids) == 3

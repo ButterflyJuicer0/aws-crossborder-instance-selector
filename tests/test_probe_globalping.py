@@ -1,0 +1,60 @@
+from crossborder_selector.models import Candidate
+from crossborder_selector.probes.globalping import GlobalpingBackend, API_BASE
+
+CFG = {"enabled": True, "locations": ["HK", "TW"], "limit_per_location": 2, "packets": 4, "timeout_s": 60}
+
+
+class FakeClock:
+    def __init__(self): self.t = 0.0
+    def __call__(self): return self.t
+    def sleep(self, s): self.t += s
+
+
+def _finished(ip):
+    return {"id": "m1", "status": "finished", "results": [
+        {"probe": {"location": {"country": "HK"}}, "result": {"status": "finished", "stats": {"total": 4, "rcv": 4, "avg": 12.5}}},
+        {"probe": {"location": {"country": "HK"}}, "result": {"status": "finished", "stats": {"total": 4, "rcv": 3, "avg": 15.0}}},
+        {"probe": {"location": {"country": "TW"}}, "result": {"status": "finished", "stats": {"total": 4, "rcv": 0, "avg": None}}},
+    ]}
+
+
+class FakeHttp:
+    def __init__(self, polls_before_finish=1):
+        self.calls, self.n = [], polls_before_finish
+    def __call__(self, method, url, body=None):
+        self.calls.append((method, url, body))
+        if method == "POST":
+            return {"id": "m1", "probesCount": 3}
+        self.n -= 1
+        return {"id": "m1", "status": "in-progress", "results": []} if self.n >= 0 else _finished("x")
+
+
+def test_request_body_and_parsing():
+    clk, http = FakeClock(), FakeHttp()
+    b = GlobalpingBackend(CFG, http=http, sleeper=clk.sleep, clock=clk)
+    out = b.probe([Candidate("i-1", "18.162.1.1")])
+    m, url, body = http.calls[0]
+    assert m == "POST" and url == f"{API_BASE}/measurements"
+    assert body["type"] == "ping" and body["target"] == "18.162.1.1"
+    assert body["locations"] == [{"country": "HK", "limit": 2}, {"country": "TW", "limit": 2}]
+    assert body["measurementOptions"] == {"packets": 4}
+    pr = out["18.162.1.1"]
+    assert pr.ok and [p.isp for p in pr.probes] == ["HK", "HK", "TW"]
+    assert pr.probes[0].median_rtt_ms == 12.5 and pr.probes[2].received == 0 and pr.probes[2].median_rtt_ms is None
+
+
+def test_timeout_yields_error():
+    clk = FakeClock()
+    b = GlobalpingBackend({**CFG, "timeout_s": 5}, http=FakeHttp(polls_before_finish=99), sleeper=clk.sleep, clock=clk, poll_s=2)
+    pr = b.probe([Candidate("i-1", "1.1.1.1")])["1.1.1.1"]
+    assert not pr.ok and "timeout" in pr.error
+
+
+def test_http_error_isolated_per_candidate():
+    def http(m, u, b=None):
+        if b and b["target"] == "2.2.2.2":
+            raise RuntimeError("429 too many")
+        return {"id": "m1"} if m == "POST" else _finished("x")
+    clk = FakeClock()
+    out = GlobalpingBackend(CFG, http=http, sleeper=clk.sleep, clock=clk).probe([Candidate("a", "1.1.1.1"), Candidate("b", "2.2.2.2")])
+    assert out["1.1.1.1"].ok and "429" in out["2.2.2.2"].error

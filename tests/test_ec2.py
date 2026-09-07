@@ -62,6 +62,23 @@ def test_mark_winner_swaps_tags_and_has_winners():
     assert m.list_run_instances("xb-w") == [] and m.has_winners() is True
 
 
+def test_mark_winner_sets_shutdown_behavior_to_stop():
+    # moto 不回读 instanceInitiatedShutdownBehavior，用假客户端断言调用内容与顺序
+    class FakeEc2:
+        def __init__(self):
+            self.order, self.shutdown = [], None
+        def modify_instance_attribute(self, **kw):
+            self.order.append("modify"); self.shutdown = kw
+        def delete_tags(self, **kw):
+            self.order.append("delete_tags")
+        def create_tags(self, **kw):
+            self.order.append("create_tags")
+    fake = FakeEc2()
+    Ec2Manager(fake, sleeper=lambda s: None).mark_winner("i-1", "xb-w", 90.0, 1, "2026-09-07T00:00:00Z")
+    assert fake.shutdown == {"InstanceId": "i-1", "InstanceInitiatedShutdownBehavior": {"Value": "stop"}}
+    assert fake.order[0] == "modify"  # 关机行为在打标签之前设置
+
+
 @mock_aws
 def test_protect_sets_both_attributes():
     ec2, infra = _setup()

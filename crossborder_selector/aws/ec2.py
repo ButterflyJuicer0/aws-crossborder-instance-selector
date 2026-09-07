@@ -62,6 +62,9 @@ class Ec2Manager:
         return [i["InstanceId"] for res in r["Reservations"] for i in res["Instances"]]
 
     def mark_winner(self, instance_id, run_id, score, round_no, now_iso):
+        # winner 长期运行，OS 内关机不应终止实例；改为 stop（stop/start 会换 IP，但比丢实例更安全）
+        self.ec2.modify_instance_attribute(
+            InstanceId=instance_id, InstanceInitiatedShutdownBehavior={"Value": "stop"})
         self.ec2.delete_tags(Resources=[instance_id], Tags=[{"Key": RUN_TAG}, {"Key": ROUND_TAG}])
         self.ec2.create_tags(Resources=[instance_id], Tags=[
             {"Key": WINNER_TAG, "Value": "true"}, {"Key": SCORE_TAG, "Value": f"{score:.1f}"},

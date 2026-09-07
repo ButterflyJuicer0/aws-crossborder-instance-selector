@@ -65,6 +65,7 @@ reverse 的 `targets` 每项可写 `host` 或 `host:port`：ping 只用 host 部
 ## 8. winner 注意事项
 
 - 不要 `stop` 该实例：stop/start 会更换公网 IP，reboot 才保留 IP。
+- winner 的 `InstanceInitiatedShutdownBehavior` 已由默认 `terminate` 改为 `stop`，即使在 OS 内执行 `shutdown`/`poweroff` 也只会停机而不会终止实例（避免丢失该 IP）。
 - 标签含义：`crossborder-winner=true`、`crossborder-score`（综合分）、`crossborder-round`（胜出轮次）、`crossborder-selected-at`（选定时间）；胜出后 `crossborder-run-id` 标签会被移除，故不受 `cleanup --run-id` 影响。
 - 加 `--protect` 会对 winner 开启 `DisableApiStop` 与 `DisableApiTermination`；手动解除：`aws ec2 modify-instance-attribute --instance-id <id> --no-disable-api-termination`（stop 保护同理用 `--no-disable-api-stop`）。
 

@@ -16,5 +16,8 @@ if [ -z "$PY" ]; then
   if [ -x "$ROOT/.venv/bin/python" ]; then PY="$ROOT/.venv/bin/python"; else PY="python3"; fi
 fi
 cd "$ROOT"
+# 存在 config.yaml 时显式传入，避免依赖 cwd 自动探测
+CONFIG_ARG=()
+[ -f "$ROOT/config.yaml" ] && CONFIG_ARG=(--config "$ROOT/config.yaml")
 exec "$PY" -m crossborder_selector.cli select --region "$REGION" --batch-size "$BATCH" \
-  --max-rounds "$ROUNDS" --keep-top-k "$KEEP" "$@"
+  --max-rounds "$ROUNDS" --keep-top-k "$KEEP" ${CONFIG_ARG[@]+"${CONFIG_ARG[@]}"} "$@"

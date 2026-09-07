@@ -77,7 +77,7 @@ aws-crossborder-instance-selector/
     scoring.py           子分归一化、ISP 加权、backend 加权、硬门限、排序
     report.py            JSON / Markdown / CSV 输出；prefix 历史追加
   scripts/
-    find_best_instance.sh   一条命令入口：生成临时 config、调用 cli、退出时清理临时文件
+    find_best_instance.sh   一条命令入口：解析位置参数、存在 config.yaml 时传 --config、调用 cli select
   tests/                 pytest；EC2/IAM 用 moto；SSM 与四个 backend 注入假 transport
   config.example.yaml
   requirements.txt
@@ -306,7 +306,7 @@ prefix 只记录，不参与打分。报告与历史文件按 prefix 汇总均�
 - `tests/test_probe_globalping.py` / `ripeatlas` / `itdog`：注入假 HTTP/WebSocket transport，验证请求体、轮询、错误降级。
 - `tests/test_orchestrator.py`：假 provider 与假 backend，验证多轮保留/终止、target_score 提前停止、winner 标签切换、finally 清理。
 - `tests/test_report.py`：三种格式字段完整性、prefix 历史合并。
-- `tests/test_wrapper_script.py`：dry-run 路径与临时 config 清理。
+- `tests/test_wrapper_script.py`：dry-run 路径与无参数用法提示。
 - 不做真实网络与真实云测试；真实验证在 MANUAL 中以 `batch_size=2, max_rounds=1` 的冒烟步骤描述。
 
 ## 13. 分阶段实施

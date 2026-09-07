@@ -72,8 +72,12 @@ def _overrides(args) -> dict:
 
 
 def _load(args):
+    config_path = args.config
+    if config_path is None and os.path.exists("config.yaml"):
+        config_path = "config.yaml"  # 未显式指定时，自动读取当前目录的 config.yaml
+        print("using config.yaml")
     try:
-        return load_config(args.config, _overrides(args))
+        return load_config(config_path, _overrides(args))
     except ValueError as e:
         print(f"config error: {e}", file=sys.stderr)
         raise SystemExit(2)

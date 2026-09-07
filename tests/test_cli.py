@@ -35,6 +35,17 @@ def test_select_rejects_bad_override():
         cli.main(["select", "--dry-run", "--enable-backend", "nope"])
 
 
+def test_select_auto_loads_cwd_config_yaml(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.yaml").write_text("batch_size: 7\n")
+
+    def no_factory(cfg):
+        raise AssertionError("dry-run must not create clients")
+    rc = cli.main(["select", "--dry-run", "--region", "ap-east-1"], factory=no_factory)
+    out = capsys.readouterr().out
+    assert rc == 0 and "using config.yaml" in out and "7 x t3.nano" in out
+
+
 @mock_aws
 def test_cleanup_terminates_only_run_and_keeps_infra(capsys):
     ec2 = boto3.client("ec2", region_name=REGION)

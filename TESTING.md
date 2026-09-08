@@ -228,7 +228,7 @@ scripts/start_web.sh --port 8792
 curl -N http://127.0.0.1:8765/api/runs/<run-id>/events
 ```
 
-每行为 `data: {json}`，事件类型依次为 `round_started`、`candidates`、`vetoed`、`round_done`，run 结束时收到 `finished`（异常时 `failed`），随后连接关闭。
+每行为 `data: {json}`，事件类型依次为 `round_started`、`candidates`、`vetoed`、`round_done`；其间穿插若干 `log` 行（后台进度文本，前端原样打进日志框）。若运行中调用了 `POST /api/runs/<run-id>/cancel`，会收到一条 `cancelled` 事件（提示当前轮结束后停止、保留在位 winner），随后本轮结束时仍以 `finished`（`stop_reason=cancelled`）收尾。run 结束时收到 `finished`（异常时 `failed`），SSE 在回放到终态后即结束。对已结束的 run 再调 cancel 返回 404。
 
 ### 8.5 前端渲染检查（可选）
 

@@ -118,9 +118,16 @@ def test_subscribe_receives_live_events(monkeypatch, tmp_path):
     from crossborder_selector.config import load_config
     FakeOrch.behaviour = "ok"
     mgr = _patched(monkeypatch, tmp_path, load_config(None, {"region": "ap-east-1"}))
-    # 先订阅再启动：用 start 前注册的 run_id 不可知，故通过 orchestrator 里的 should_stop 阻塞不可行；改为启动后立刻订阅并校验回放+实时
+    # 用 threading.Event 门控 orchestrator：先订阅、再放行，确保能收到实时事件（不再依赖竞态）
+    gate = threading.Event()
+    class GatedOrch(FakeOrch):
+        def run(self):
+            gate.wait(5)
+            return super().run()
+    mgr.orchestrator_factory = GatedOrch
     run_id = mgr.start({"region": "ap-east-1"})
     q = mgr.subscribe(run_id)
+    gate.set()
     got = []
     t0 = time.time()
     while time.time() - t0 < 5:

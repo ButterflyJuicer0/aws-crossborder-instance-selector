@@ -130,6 +130,29 @@ def test_cancel_finished_run_404_and_sse_replays_terminal(srv):
     assert seen and seen[-1] == "finished"
 
 
+def test_terminate_others_endpoint(srv):
+    base, _ = srv
+    rid = _post(base + "/api/runs", {"region": "ap-east-1", "batch_size": 3, "max_rounds": 1, "keep_top_k": 2})[1]["run_id"]
+    detail = {}
+    for _ in range(300):
+        detail = _get(base + f"/api/runs/{rid}")[1]
+        if detail["state"] != "running":
+            break
+        time.sleep(0.02)
+    assert detail["state"] == "finished"
+    winners = [w["instance_id"] for w in detail["winners"]]
+    assert len(winners) == 2
+    # 未选定 → 409
+    st, b = _post(base + f"/api/runs/{rid}/terminate_others", {})
+    assert st == 409 and b["error"]
+    # 选定但不终止其余
+    st, sel = _post(base + f"/api/runs/{rid}/select", {"instance_id": winners[0], "protect": False, "terminate_others": False})
+    assert st == 200 and sel["terminated"] == []
+    # 之后单独终止其余保留候选
+    st, r = _post(base + f"/api/runs/{rid}/terminate_others", {})
+    assert st == 200 and r["terminated"] == winners[1:]
+
+
 def test_post_guard_content_type_origin_and_host(srv):
     base, _ = srv
     url = base + "/api/plan"

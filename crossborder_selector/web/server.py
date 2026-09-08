@@ -9,7 +9,7 @@ from urllib.parse import urlparse, urlsplit, parse_qs
 from crossborder_selector.web.api import ApiError
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-_RUN_RE = re.compile(r"^/api/runs/([A-Za-z0-9][A-Za-z0-9-]*)(?:/(events|cancel|select|report\.(json|md|csv)))?$")
+_RUN_RE = re.compile(r"^/api/runs/([A-Za-z0-9][A-Za-z0-9-]*)(?:/(events|cancel|select|terminate_others|report\.(json|md|csv)))?$")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
 _LOOPBACK = {"127.0.0.1", "localhost", "::1"}
 
@@ -183,6 +183,11 @@ class Handler(BaseHTTPRequestHandler):
             with open(sel_path, "w") as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
             return self._json(200, result)
+        if sub == "terminate_others" and method == "POST":
+            sel = self._selection(rid)
+            if not sel:
+                raise ApiError(409, "本次 run 尚未选定，无法终止其余候选")
+            return self._json(200, api.terminate_others(sel.get("selected", ""), self._region_for(rid), runs.winner_ids(rid)))
         if sub and sub.startswith("report.") and method == "GET":
             ctype = {"json": "application/json; charset=utf-8", "md": "text/markdown; charset=utf-8", "csv": "text/csv; charset=utf-8"}[ext]
             name = {"json": "report.json", "md": "report.md", "csv": "candidates.csv"}[ext]

@@ -436,6 +436,14 @@ async function mountConfirm(){
       <div class="k">protect winner</div><div class="v">${cfg.protect ? "是" : "否"}</div>
     </div></div>
     <div class="card"><h3>dry-run 计划</h3><pre class="summary">${esc(plan.plan_summary)}</pre></div>
+    <div class="card"><h3>权限提示</h3>
+      <p class="step-desc">当前凭证需具备以下日常运行 IAM action（点击展开）。若开始运行时报权限不足，请对照补齐。</p>
+      <details><summary>日常运行 IAM action 清单</summary>
+        <pre class="summary">ec2:RunInstances, ec2:Describe*, ec2:TerminateInstances, ec2:CreateTags, ec2:DeleteTags,
+ec2:CreateSecurityGroup, ec2:ModifyInstanceAttribute,
+iam:CreateRole, iam:AttachRolePolicy, iam:CreateInstanceProfile, iam:AddRoleToInstanceProfile,
+iam:TagRole, iam:TagInstanceProfile, iam:PassRole, iam:Get*,
+ssm:SendCommand, ssm:GetCommandInvocation, ssm:DescribeInstanceInformation, ssm:GetParameters</pre></details></div>
     <div class="actions">
       <button class="btn" id="cf-back" type="button">返回修改</button>
       <button class="btn primary" id="cf-start" type="button">开始运行</button>
@@ -753,6 +761,10 @@ function mountDone(){
   if (w.composite != null) tags.push(`crossborder-score=${w.composite}`);
   const cmdStop = `aws ec2 modify-instance-attribute --region ${state.region} --instance-id ${sel.selected} --no-disable-api-stop`;
   const cmdTerm = `aws ec2 modify-instance-attribute --region ${state.region} --instance-id ${sel.selected} --no-disable-api-termination`;
+  const winnerIds = (state.report.winners || []).map(x => x.instance_id);
+  const alreadyTerm = new Set(sel.terminated || []);
+  const others = winnerIds.filter(x => x !== sel.selected && !alreadyTerm.has(x));
+  const cmdCleanup = `python -m crossborder_selector.cli cleanup --region ${state.region} --run-id ${id}`;
   c.innerHTML = `
     <h2>第 6 步 · 完成</h2>
     <p class="step-desc">已选定出口实例。请按下方建议接入，并保留报告备查。</p>
@@ -772,6 +784,13 @@ function mountDone(){
       <li>如需解除 protect（先解 stop 再解 terminate）：</li>
     </ul>
     <pre class="cmd">${esc(cmdStop)}\n${esc(cmdTerm)}</pre></div>
+    <div class="card"><h3>清理其余保留候选</h3>
+      <p class="step-desc">${others.length ? `本次仍保留 ${others.length} 台其余候选，可一并终止：` : "没有需要清理的其余保留候选。"}</p>
+      ${others.length ? `<div class="iplist">${others.map(esc).join("、")}</div>` : ""}
+      <div class="actions">${others.length ? `<button class="btn danger" id="done-term" type="button">终止其余保留候选</button>` : ""}
+        <span id="term-note" class="pill neutral" hidden></span></div>
+      <p class="step-desc" style="margin-top:12px">或用命令行按 run-id 清理本 run 的全部候选（已标记 winner 的实例不受影响）：</p>
+      <pre class="cmd">${esc(cmdCleanup)}</pre></div>
     <div class="card"><h3>下载报告</h3><div class="actions" style="margin-top:0">
       <a class="btn" href="/api/runs/${encodeURIComponent(id)}/report.json" download>report.json</a>
       <a class="btn" href="/api/runs/${encodeURIComponent(id)}/report.md" download>report.md</a>
@@ -783,6 +802,17 @@ function mountDone(){
     </div>`;
   $("#done-again").addEventListener("click", () => goStep(2));
   $("#done-hist").addEventListener("click", refreshHistory);
+  const dt = $("#done-term");
+  if (dt) dt.addEventListener("click", async () => {
+    if (!confirm(`将终止其余保留候选：${others.join("、")}。此操作不可逆，确认？`)) return;
+    dt.disabled = true; dt.textContent = "终止中…";
+    try {
+      const r = await post(`/api/runs/${id}/terminate_others`, {});
+      const note = $("#term-note"); note.hidden = false;
+      note.textContent = `已终止 ${r.terminated.length} 台：${r.terminated.join(", ") || "无"}`;
+      dt.hidden = true;
+    } catch(e){ showError("终止失败：" + e.message); dt.disabled = false; dt.textContent = "终止其余保留候选"; }
+  });
 }
 
 // ---------- 历史运行侧栏 ----------

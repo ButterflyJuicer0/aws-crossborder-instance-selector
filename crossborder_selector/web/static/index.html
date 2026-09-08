@@ -579,6 +579,8 @@ function showFailed(message, leftover){
   </div>`;
   const btn = $("#fail-clean");
   if (btn && leftover.length) btn.addEventListener("click", async () => {
+    const targets = leftover.length ? leftover.join("、") : "该 run 下所有带 crossborder-run-id 标签的实例";
+    if (!confirm(`将终止本次运行的遗留实例：${targets}。此操作不可逆，确认清理？`)) return;
     btn.disabled = true; btn.textContent = "清理中…";
     try { const r = await post("/api/cleanup", {run_id: state.runId});
       const note = $("#clean-note"); note.hidden = false; note.textContent = `已终止 ${r.terminated.length} 台：${r.terminated.join(", ") || "无"}`;

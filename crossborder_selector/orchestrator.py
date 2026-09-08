@@ -15,18 +15,28 @@ def utc_now_iso() -> str:
 
 class Orchestrator:
     def __init__(self, cfg, ec2, ssm, backends, reputation_sources, prefix_lookup, infra, run_id,
-                 clock=utc_now_iso, log=print):
+                 clock=utc_now_iso, log=print, on_event=None, should_stop=None):
         self.cfg, self.ec2, self.ssm = cfg, ec2, ssm
         self.backends, self.rep_sources = backends, reputation_sources
         self.prefix_lookup, self.infra, self.run_id = prefix_lookup, infra, run_id
         self.now, self.log = clock, log
         self.reverse_enabled = any(b.name == "reverse" for b in backends)
+        # Web 层可注入的钩子：on_event 广播每轮进度，should_stop 供用户取消
+        self.on_event = on_event or (lambda e: None)
+        self.should_stop = should_stop or (lambda: False)
+
+    def _emit(self, type_, **fields):
+        self.on_event({"type": type_, "ts": self.now(), **fields})
 
     def run(self) -> RunResult:
         started, rounds, incumbents, stop = self.now(), [], [], "max_rounds"
         launched_all = set()
         try:
             for rno in range(1, self.cfg.max_rounds + 1):
+                if self.should_stop():  # 每轮 launch 前检查取消
+                    stop = "cancelled"
+                    break
+                self._emit("round_started", round=rno, batch_size=self.cfg.batch_size)
                 self.log(f"[round {rno}] launching {self.cfg.batch_size} x {self.cfg.instance_type}")
                 try:
                     ids = self.ec2.launch(self.cfg.batch_size, self.run_id, rno, self.infra,
@@ -64,6 +74,9 @@ class Orchestrator:
             ips = self.ec2.public_ips(ids)
             cands = [Candidate(i, ips[i], self.prefix_lookup(ips[i]) if ips[i] else "", rno, self.now())
                      for i in ids]
+            self._emit("candidates", round=rno,
+                       items=[{"instance_id": c.instance_id, "public_ip": c.public_ip, "prefix": c.prefix}
+                              for c in cands])
 
             vetoed, survivors = [], []
             for c in cands:
@@ -77,6 +90,9 @@ class Orchestrator:
                     survivors.append((c, rep))
             self.ec2.terminate([v.candidate.instance_id for v in vetoed])
             terminated += [v.candidate.instance_id for v in vetoed]
+            self._emit("vetoed", round=rno,
+                       items=[{"instance_id": v.candidate.instance_id, "public_ip": v.candidate.public_ip,
+                               "reason": v.veto_reason} for v in vetoed])
 
             if survivors:
                 online = self.ssm.wait_online([c.instance_id for c, _ in survivors], self.cfg.ssm_online_timeout_s)
@@ -95,6 +111,10 @@ class Orchestrator:
             self.ec2.terminate(losers)
             terminated += losers
             self.log(f"[round {rno}] kept={[s.candidate.public_ip for s in kept]} terminated={len(terminated)}")
+            self._emit("round_done", round=rno,
+                       kept=[{"instance_id": s.candidate.instance_id, "public_ip": s.candidate.public_ip,
+                              "composite": s.composite} for s in kept],
+                       terminated=list(terminated), backend_errors=dict(errors))
             return RoundResult(rno, cands, vetoed, scored, kept, terminated, errors)
         except BaseException:  # 含 KeyboardInterrupt：先终止本轮实例再上抛
             self.ec2.terminate([i for i in ids if i not in terminated])

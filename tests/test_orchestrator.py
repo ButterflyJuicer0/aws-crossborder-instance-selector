@@ -195,3 +195,41 @@ def test_no_survivors_skips_probing():
     rr = orch.run()
     assert rr.stop_reason == "no_qualified" and rr.winners == []
     assert rr.rounds[0].scored == [] and set(ec2.terminated) == {"i-1", "i-2"}
+
+
+def test_on_event_sequence_and_payloads():
+    ec2 = FakeEc2(["10.0.0.1", "10.0.0.2"])
+    events = []
+    orch = Orchestrator(_cfg(max_rounds=1), ec2, FakeSsm(), [ScriptedBackend({"10.0.0.1": 100.0})],
+                        [Denylist(["10.0.0.2"])], lambda ip: "10.0.0.0/8", INFRA, "xb-t",
+                        log=lambda *a: None, on_event=events.append)
+    orch.run()
+    types = [e["type"] for e in events]
+    assert types == ["round_started", "candidates", "vetoed", "round_done"]
+    assert all("ts" in e and e["round"] == 1 for e in events)
+    assert events[0]["batch_size"] == 2
+    assert {i["public_ip"] for i in events[1]["items"]} == {"10.0.0.1", "10.0.0.2"}
+    assert events[1]["items"][0]["prefix"] == "10.0.0.0/8"
+    assert events[2]["items"] == [{"instance_id": "i-2", "public_ip": "10.0.0.2", "reason": "reputation"}]
+    assert events[3]["kept"][0]["public_ip"] == "10.0.0.1" and "i-2" in events[3]["terminated"]
+    assert events[3]["backend_errors"] == {}
+
+
+def test_should_stop_cancels_before_next_round_and_marks_winner():
+    ec2 = FakeEc2(["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"])
+    flag = {"stop": False}
+    def backend_probe_then_flag():
+        b = ScriptedBackend({"10.0.0.1": 150.0, "10.0.0.2": 100.0})
+        orig = b.probe
+        def probe(cands):
+            flag["stop"] = True
+            return orig(cands)
+        b.probe = probe
+        return b
+    orch = Orchestrator(_cfg(max_rounds=3), ec2, FakeSsm(), [backend_probe_then_flag()], [], lambda ip: "",
+                        INFRA, "xb-t", log=lambda *a: None, should_stop=lambda: flag["stop"])
+    rr = orch.run()
+    assert len(rr.rounds) == 1 and rr.stop_reason == "cancelled"
+    assert rr.winners[0].candidate.public_ip == "10.0.0.2"
+    assert ec2.winners == [("i-2", rr.winners[0].composite, 1)]
+    assert set(ec2.live) == {"i-2"}

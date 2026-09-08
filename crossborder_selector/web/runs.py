@@ -153,11 +153,13 @@ class RunManager:
                 on_event=lambda e: self.emit(run_id, e),
                 should_stop=self._flags[run_id].is_set)
             result = orch.run()
-            paths = write_reports(result, cfg, out_dir=self.output_dir)
+            # winner 先于报告落库：即便随后 write_reports 失败，winner 已可见且带进 failed 事件
             rec.stop_reason = result.stop_reason
             rec.winners = [{"instance_id": w.candidate.instance_id, "public_ip": w.candidate.public_ip,
                             "prefix": w.candidate.prefix, "composite": w.composite, "round": w.candidate.round,
                             "isp_scores": w.isp_scores} for w in result.winners]
+            self._persist(rec)
+            paths = write_reports(result, cfg, out_dir=self.output_dir)
             rec.report_paths = {k: v for k, v in paths.items() if k in ("json", "md", "csv")}
             rec.finished_at = self.clock()
             # 先落终态事件（events.jsonl 与 record.events），再翻转 state：worker 线程里 state 必须是
@@ -173,6 +175,7 @@ class RunManager:
             except Exception:
                 rec.leftover_instance_ids = []
             # 同上：先落 failed 事件，再翻转 state，保证主线程读到终态时事件已就绪
-            self.emit(run_id, {"type": "failed", "message": rec.error, "leftover_instance_ids": rec.leftover_instance_ids})
+            self.emit(run_id, {"type": "failed", "message": rec.error, "leftover_instance_ids": rec.leftover_instance_ids,
+                               "winner_instance_ids": [w["instance_id"] for w in rec.winners]})
             rec.state = "failed"
             self._persist(rec)

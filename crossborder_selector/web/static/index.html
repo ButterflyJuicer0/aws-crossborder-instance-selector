@@ -526,7 +526,7 @@ function applyEvent(ev){
   else if (ev.type === "vetoed"){ roundOf(ev.round).vetoed = ev.items || []; }
   else if (ev.type === "round_done"){ const r = roundOf(ev.round); r.kept = ev.kept || []; r.terminated = (ev.terminated || []).length; r.done = true; }
   else if (ev.type === "finished"){ state.runState = ev.stop_reason === "cancelled" ? "cancelled" : "finished"; onFinished(ev); return; }
-  else if (ev.type === "failed"){ state.runState = "failed"; showFailed(ev.message, ev.leftover_instance_ids || []); return; }
+  else if (ev.type === "failed"){ state.runState = "failed"; showFailed(ev.message, ev.leftover_instance_ids || [], ev.winner_instance_ids || []); return; }
   if (state.step === 4){ renderRounds(); renderLog(); updateProgress(); }
 }
 function pushLog(m){ if (m == null) return; state.logLines.push(String(m)); if (state.logLines.length > 500) state.logLines = state.logLines.slice(-500); }
@@ -565,7 +565,7 @@ function startPolling(id){
     if (d.state && d.state !== "running"){
       clearInterval(state.pollTimer); state.pollTimer = null;
       state.runState = d.state;
-      if (d.state === "failed") showFailed(d.error, d.leftover_instance_ids || []);
+      if (d.state === "failed") showFailed(d.error, d.leftover_instance_ids || [], (d.winners || []).map(w => w.instance_id));
       else { state.runDetail = d; onFinished({stop_reason:d.stop_reason, winners:d.winners}); }
     }
   };
@@ -581,13 +581,18 @@ function onFinished(){
   enterResult(state.runId);
   refreshHistory();
 }
-function showFailed(message, leftover){
+function showFailed(message, leftover, winners){
   state.following = false; closeStreams(); clearInterval(state.timerId);
   if (state.step !== 4) goStep(4);
   const box = $("#fail-box"); if (!box) return;
+  winners = winners || [];
+  const winnerHtml = winners.length
+    ? `<p style="font-size:13px">已标记为 winner 的实例（报告写入失败但已加固，不受 cleanup 影响）：</p><div class="iplist">${winners.map(esc).join(", ")}</div>`
+    : "";
   box.innerHTML = `<div class="card" style="border-color:var(--bad)">
     <h3 style="color:var(--bad)">运行失败</h3>
     <p style="font-size:13px">${esc(message || "未知错误")}</p>
+    ${winnerHtml}
     ${leftover.length ? `<p style="font-size:13px">遗留实例（未终止）：</p><div class="iplist">${leftover.map(esc).join(", ")}</div>` : `<p style="font-size:13px">没有检测到遗留实例。</p>`}
     <div class="actions"><button class="btn danger" id="fail-clean" type="button"${leftover.length ? "" : " disabled"}>立即清理</button>
       <span id="clean-note" class="pill neutral" hidden></span></div>
@@ -846,7 +851,7 @@ async function openRun(id, knownState){
     (d.events || []).forEach(applyEventQuiet);
     goStep(4); connectSSE(id);
   } else if (st === "failed"){
-    goStep(4); showFailed(d.error, d.leftover_instance_ids || []);
+    goStep(4); showFailed(d.error, d.leftover_instance_ids || [], (d.winners || []).map(w => w.instance_id));
   } else if (st === "unknown"){
     showError("该运行状态未知（服务可能重启过）。如担心有遗留实例，请对其执行清理。");
     try { state.report = await api(`/api/runs/${id}/report.json`); enterResult(id); }

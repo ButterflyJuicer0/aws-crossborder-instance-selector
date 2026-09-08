@@ -153,6 +153,20 @@ def test_failure_records_leftovers(monkeypatch, tmp_path):
     FakeOrch.behaviour = "ok"
 
 
+def test_report_write_failure_keeps_winners(monkeypatch, tmp_path):
+    from crossborder_selector.config import load_config
+    FakeOrch.behaviour = "ok"
+    mgr = _patched(monkeypatch, tmp_path, load_config(None, {"region": "ap-east-1"}))
+    def boom(*a, **k):
+        raise RuntimeError("disk full")
+    monkeypatch.setattr("crossborder_selector.web.runs.write_reports", boom)
+    run_id = mgr.start({"region": "ap-east-1"})
+    rec = _wait(mgr, run_id)
+    assert rec.state == "failed" and "disk full" in rec.error
+    assert rec.winners and rec.winners[0]["instance_id"] == "i-1"       # winner 已在报告失败前落库
+    assert rec.events[-1]["type"] == "failed" and rec.events[-1]["winner_instance_ids"] == ["i-1"]
+
+
 def test_cancel_sets_flag_and_state(monkeypatch, tmp_path):
     from crossborder_selector.config import load_config
     FakeOrch.behaviour = "ok"

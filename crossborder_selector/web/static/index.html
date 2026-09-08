@@ -234,7 +234,11 @@ function goStep(n){
 // ---------- 数据加载 ----------
 async function loadOptions(){
   state.options = await api("/api/options?region=" + encodeURIComponent(state.region));
-  if (!state.form) initForm();
+  if (!state.form){ initForm(); return; }
+  // 切换 Region 后当前机型可能不在新 offerings 中，回退到列表第一项
+  const types = state.options.instance_types || [];
+  if (!types.some(t => t.type === state.form.instance_type))
+    state.form.instance_type = (types[0] || {}).type;
 }
 function initForm(){
   const d = state.options.defaults;
@@ -356,7 +360,7 @@ function mountConfig(){
     <p class="step-desc">选择机型与探测规模；右侧「预估」随输入实时更新。下一步会给出可确认的运行计划。</p>
     <div class="form-grid">
       <div>
-        <div class="card"><h3>机型（单选，默认 t3.nano）</h3><div class="inst-grid" id="inst-grid">${instCards}</div></div>
+        <div class="card"><h3>机型（单选，默认 ${esc((state.options.defaults || {}).instance_type)}）</h3><div class="inst-grid" id="inst-grid">${instCards}</div></div>
         <div class="card"><h3>规模</h3>${nums}</div>
         <div class="card"><h3>探测 backend</h3>${backs}
           <div class="chk"><input id="c-protect" type="checkbox"${f.protect ? " checked" : ""}>
@@ -779,7 +783,7 @@ function mountDone(){
       <div class="k">prefix</div><div class="v mono">${esc(w.prefix || "")}</div>
       <div class="k">综合分</div><div class="v">${fmt(w.composite)}</div>
       <div class="k">protect</div><div class="v">${sel.protected ? "已开启" : "未开启"}</div>
-      <div class="k">已终止其余</div><div class="v mono">${(sel.terminated || []).join(", ") || "无"}</div>
+      <div class="k">已终止其余</div><div class="v mono">${esc((sel.terminated || []).join(", ")) || "无"}</div>
       <div class="k">标签</div><div class="v"><div class="tags">${tags.map(t => `<span class="pill neutral">${esc(t)}</span>`).join("")}</div></div>
     </div></div>
     <div class="card"><h3>接入建议</h3><ul class="notes">

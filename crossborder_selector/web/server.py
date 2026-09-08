@@ -9,7 +9,7 @@ from urllib.parse import urlparse, parse_qs
 from crossborder_selector.web.api import ApiError
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-_RUN_RE = re.compile(r"^/api/runs/([A-Za-z0-9._-]+)(?:/(events|cancel|select|report\.(json|md|csv)))?$")
+_RUN_RE = re.compile(r"^/api/runs/([A-Za-z0-9][A-Za-z0-9-]*)(?:/(events|cancel|select|report\.(json|md|csv)))?$")
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -99,11 +99,15 @@ class Handler(BaseHTTPRequestHandler):
         if method == "POST" and p == "/api/cleanup":
             body = self._body()
             rid = body.get("run_id") or ""
+            if ".." in rid or "/" in rid:  # 防止逃逸 output_dir
+                raise ApiError(400, "run id 非法")
             return self._json(200, api.cleanup(rid, self._region_for(rid)))
         m = _RUN_RE.match(p)
         if not m:
             raise ApiError(404, "未找到")
         rid, sub, ext = m.group(1), m.group(2), m.group(3)
+        if ".." in rid or "/" in rid:  # 防止逃逸 output_dir
+            raise ApiError(400, "run id 非法")
         if sub is None and method == "GET":
             rec = runs.get(rid)
             if rec:

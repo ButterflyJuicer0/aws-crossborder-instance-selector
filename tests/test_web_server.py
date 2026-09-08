@@ -98,3 +98,21 @@ def test_404_and_bad_json(srv):
         urllib.request.urlopen(req, timeout=5)
     except urllib.error.HTTPError as e:
         assert e.code == 400
+
+
+def test_run_id_traversal_rejected(srv, tmp_path):
+    base, _ = srv
+    # GET 报表下载：含 .. 的 run id 必须被拒（4xx + JSON error），不得读到 out/ 之外
+    try:
+        urllib.request.urlopen(base + "/api/runs/../report.csv", timeout=5)
+        assert False, "应当拒绝 .. run id"
+    except urllib.error.HTTPError as e:
+        assert 400 <= e.code < 500 and json.loads(e.read()).get("error")
+    # POST select：含 .. 的 run id 必须被拒，且不得写出 selection.json
+    st, _ = _post(base + "/api/runs/../select", {"instance_id": "i-x", "protect": False, "terminate_others": False})
+    assert 400 <= st < 500
+    # POST cleanup：body 里的 .. run id 必须被拒
+    st, _ = _post(base + "/api/cleanup", {"run_id": ".."})
+    assert 400 <= st < 500
+    # 未发生目录逃逸写入（out/../selection.json 即 tmp_path/selection.json）
+    assert not (tmp_path / "selection.json").exists()

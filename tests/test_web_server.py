@@ -40,6 +40,15 @@ def _post(url, payload):
         return e.code, json.loads(e.read())
 
 
+def _req(url, method="POST", headers=None, data=b"{}"):
+    req = urllib.request.Request(url, data=data, headers=headers or {}, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return r.status, r.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+
+
 def test_index_and_meta(srv):
     base, _ = srv
     status, body = _get(base + "/", raw=True)
@@ -85,6 +94,27 @@ def test_run_lifecycle_and_sse(srv):
     assert st == 400
     st, cl = _post(base + "/api/cleanup", {"run_id": rid})
     assert st == 200 and cl["run_id"] == rid
+
+
+def test_post_guard_content_type_origin_and_host(srv):
+    base, _ = srv
+    url = base + "/api/plan"
+    body = json.dumps({"region": "ap-east-1", "batch_size": 3, "max_rounds": 1}).encode()
+    # 正常 JSON POST 仍 200
+    st, _ = _req(url, headers={"Content-Type": "application/json"}, data=body)
+    assert st == 200
+    # 缺 application/json（text/plain）→ 415
+    st, b = _req(url, headers={"Content-Type": "text/plain"}, data=body)
+    assert st == 415 and json.loads(b)["error"]
+    # 跨站 Origin → 403
+    st, b = _req(url, headers={"Content-Type": "application/json", "Origin": "http://evil.example.com"}, data=body)
+    assert st == 403 and json.loads(b)["error"]
+    # 同源（loopback）Origin → 放行
+    st, _ = _req(url, headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:1234"}, data=body)
+    assert st == 200
+    # 非回环 Host（任意请求）→ 403
+    st, b = _req(base + "/api/meta", method="GET", headers={"Host": "evil.example.com"}, data=None)
+    assert st == 403 and json.loads(b)["error"]
 
 
 def test_404_and_bad_json(srv):

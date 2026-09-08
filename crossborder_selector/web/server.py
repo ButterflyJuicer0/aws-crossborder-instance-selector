@@ -4,12 +4,28 @@ import os
 import queue
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, urlsplit, parse_qs
 
 from crossborder_selector.web.api import ApiError
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 _RUN_RE = re.compile(r"^/api/runs/([A-Za-z0-9][A-Za-z0-9-]*)(?:/(events|cancel|select|report\.(json|md|csv)))?$")
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+_LOOPBACK = {"127.0.0.1", "localhost", "::1"}
+
+
+def _hostname(value, has_scheme=False):
+    """从 Host 头（host[:port] 或 [ipv6]:port）或 Origin（完整 URL）中取主机名，小写、去括号。"""
+    if not value:
+        return None
+    try:
+        return urlsplit(value if has_scheme else "//" + value).hostname
+    except ValueError:
+        return None
+
+
+def _is_loopback(hostname):
+    return hostname is not None and hostname.lower() in _LOOPBACK
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -77,7 +93,21 @@ class Handler(BaseHTTPRequestHandler):
 
     do_POST = do_GET
 
+    def _guard(self, method):
+        """本机安全护栏：非回环 Host 拒绝（--allow-remote 放开）；POST 强制 JSON 且拒绝跨站 Origin。"""
+        if not self.ctx.get("allow_remote"):
+            if not _is_loopback(_hostname(self.headers.get("Host"))):
+                raise ApiError(403, "非本机访问被拒绝")
+        if method == "POST":
+            ct = self.headers.get("Content-Type") or ""
+            if not ct.startswith("application/json"):
+                raise ApiError(415, "Content-Type 必须为 application/json")
+            origin = self.headers.get("Origin")
+            if origin and not _is_loopback(_hostname(origin, has_scheme=True)):
+                raise ApiError(403, "跨站请求被拒绝")
+
     def _route(self, method):
+        self._guard(method)
         u = urlparse(self.path)
         qs = parse_qs(u.query)
         api, runs = self.ctx["api"], self.ctx["runs"]
@@ -180,8 +210,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.flush()
 
 
-def make_server(host, port, api, runs, static_dir=None, demo=False) -> ThreadingHTTPServer:
+def make_server(host, port, api, runs, static_dir=None, demo=False, allow_remote=False) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
-    server.ctx = {"api": api, "runs": runs, "static_dir": static_dir or STATIC_DIR, "demo": demo}
+    server.ctx = {"api": api, "runs": runs, "static_dir": static_dir or STATIC_DIR, "demo": demo,
+                  "allow_remote": allow_remote}
     return server

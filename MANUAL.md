@@ -8,7 +8,7 @@
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt && pytest -q
 ```
 
-`pytest -q` 应全部通过；测试用 moto 模拟 EC2/IAM/SSM，不产生真实资源、无需 AWS 凭证。
+`pytest -q` 应全部通过（当前 101 个）；测试用 moto 模拟 EC2/IAM/SSM，不产生真实资源、不需 AWS 凭证。更完整的测试说明见 [TESTING.md](TESTING.md)。
 
 ## 2. 配置
 
@@ -22,7 +22,7 @@ cp config.example.yaml config.yaml
 - `instance_type`：候选机型，默认 `t3.nano`；arm 机型自动选用 arm64 AMI。
 - `batch_size` / `max_rounds` / `keep_top_k`：每轮候选数 / 最大轮次 / 全局保留数。
 - `target_score`：综合分达到即提前停止（默认 90）。
-- `subnet_id` / `security_group_id`：**仅当目标 Region 没有默认 VPC 时必填**，否则留空自动准备。
+- `subnet_id` / `security_group_id`：仅当目标 Region 没有默认 VPC 时必填，否则留空自动准备。
 - `backends.*.enabled`：各拨测源开关；`ripeatlas.api_key` 留空则跳过，`itdog` 默认关闭。
 - `reputation.abuseipdb_api_key`：留空则跳过 AbuseIPDB，其余信誉源仍生效。
 
@@ -34,11 +34,12 @@ scripts/find_best_instance.sh ap-east-1 2 1 1 --dry-run
 
 逐行含义：
 
-- `DRY-RUN run-id=...`：本次生成的 run-id（格式 `xb-<UTC 时间>-<4 位十六进制>`）。
+- `DRY-RUN run-id=...`：本次生成的 run-id，格式 `xb-<UTC 时间>-<4 位十六进制>`。
 - `region=`：目标区域。
 - `per round:`：每轮启动的实例数与机型、最大轮次、保留数、目标分。
-- `infra:`：将复用/创建的子网、安全组 `crossborder-selector-sg`、实例配置 `crossborder-selector-ssm`、AMI。
+- `infra:`：将复用或创建的子网、安全组 `crossborder-selector-sg`、实例配置 `crossborder-selector-ssm`、AMI。
 - `backends:`：本次启用的拨测源。
+- `protect winner:`：是否对 winner 开启停止/终止保护（`--protect` 决定）。
 - `reverse targets:`：三网回程探测目标。
 - `No AWS resources will be created.`：确认 dry-run 不动云资源。
 
@@ -59,7 +60,7 @@ scripts/find_best_instance.sh ap-east-1 2 1 1
 scripts/find_best_instance.sh ap-east-1 20 3 1 --protect
 ```
 
-`--protect` 会为 winner 开启停止/终止保护。运行中若需中断：按 Ctrl-C 停止，然后用打印出的 run-id 清理残留候选机：
+`--protect` 会为 winner 开启停止/终止保护。运行中按 Ctrl-C 会中断：进程以退出码 130 结束，并在 stderr 打印残留候选机的 instance id，然后用打印出的 run-id 清理：
 
 ```bash
 python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
@@ -67,8 +68,8 @@ python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
 
 ## 6. 启用可选 backend
 
-- ripeatlas：需在 `config.yaml` 的 `backends.ripeatlas` 填 `api_key` 并保证账户有 credits（申请见 https://atlas.ripe.net/docs/getting-started/credits ），填好后自动启用。注意 RIPE Atlas 的 one-off 测量结果通常要数分钟才齐，默认 `timeout_s: 120` 可能只拿到部分探针结果；需要更完整覆盖时可调大该值。
-- itdog：`scripts/find_best_instance.sh ap-east-1 20 3 1 --enable-backend itdog`。注意 itdog 为非官方 WebSocket 接口，随时可能失效，失败只降级不阻塞本轮。
+- ripeatlas：在 `config.yaml` 的 `backends.ripeatlas` 填 `api_key` 并保证账户有 credits（申请见 https://atlas.ripe.net/docs/getting-started/credits ），填好后自动启用。RIPE Atlas 的 one-off 测量结果通常要数分钟才齐，默认 `timeout_s: 120` 可能只拿到部分探针结果；需要更完整覆盖时调大该值。
+- itdog：`scripts/find_best_instance.sh ap-east-1 20 3 1 --enable-backend itdog`。itdog 为非官方 WebSocket 接口，随时可能失效，失败只降级不阻塞本轮。
 
 ## 7. 清理
 
@@ -76,7 +77,7 @@ python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
 python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
 ```
 
-默认只终止带该 run-id 的候选机，保留共享的 SG 与实例配置（winner 依赖）。加 `--include-infra` 会连同删除 `crossborder-selector-sg` 与 `crossborder-selector-ssm`；**前提是当前没有任何 `crossborder-winner=true` 实例**，否则会拒绝删除。
+默认只终止带该 run-id 的候选机，保留共享的 SG 与实例配置（winner 依赖）。加 `--include-infra` 会连同删除 `crossborder-selector-sg` 与 `crossborder-selector-ssm`；前提是当前没有任何 `crossborder-winner=true` 实例，否则工具拒绝删除。
 
 ## 8. 故障排查
 
@@ -87,8 +88,10 @@ python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
 | RunInstances 配额/容量不足 | 本轮自动缩批并在报告标注；提升该 Region vCPU 配额或减小 `batch_size` |
 | ip-ranges 下载失败 | prefix 置空、流程继续；检查网络或稍后重试 |
 | 所有候选 `reverse_unreachable` | 探测目标被封或 ICMP 限速，更换 `backends.reverse.targets` 中的三网目标 |
-| 每次都 `no_qualified`（信誉全否决） | 使用公共递归 DNS 时 Spamhaus 会对每次查询返回 `127.255.255.254`（经开放递归）/`127.255.255.255`（被限速），本工具已将其识别为源错误而非命中；若报告里 dnsbl detail 为 `error:...`，请改用本机/VPC 解析器，或在 `reputation.dnsbl_zones` 换用不受此限的 zone |
-| globalping 报错 429 / 频繁失败 | 公共 API 匿名限速约 250 tests/h；批量或多轮容易触顶。在 `backends.globalping.api_token` 填入 token 提升到约 500 tests/h，或减小 `batch_size`/`limit_per_location` |
+| 每次都 `no_qualified`（信誉全否决） | 使用公共递归 DNS 时 Spamhaus 会对每次查询返回 `127.255.255.254`（经开放递归）或 `127.255.255.255`（被限速），本工具已将其识别为源错误、不计命中；若报告里 dnsbl detail 为 `error:...`，请改用本机/VPC 解析器，或在 `reputation.dnsbl_zones` 换用不受此限的 zone |
+| globalping 报错 429 / 频繁失败 | 公共 API 匿名限速约 250 tests/h，批量或多轮容易触顶。在 `backends.globalping.api_token` 填入 token 提升到约 500 tests/h，或减小 `batch_size`/`limit_per_location` |
+| RIPE Atlas 结果偏少 | one-off 测量需数分钟才齐，默认 `timeout_s: 120` 内可能只回部分探针；调大 `backends.ripeatlas.timeout_s` |
+| `cleanup --include-infra` 报 `DependencyViolation` | SG 仍被运行中的实例（含 winner 或其他 run）占用；先终止相关实例再删，工具会将该错误转为 `RuntimeError` 提示 |
 
 ## 9. 把 winner 交给生产
 

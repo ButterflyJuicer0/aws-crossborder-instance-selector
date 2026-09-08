@@ -1,1 +1,815 @@
-<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>跨境优选实例向导</title></head><body>向导加载中</body></html>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>跨境优选实例向导</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#F5F7F9; --surface:#FFFFFF; --ink:#1B2430; --muted:#5F6B79; --line:#D9DFE6;
+  --accent:#0E7C6E; --accent-ink:#FFFFFF; --accent-soft:#DCEFEB;
+  --good:#1E8E4E; --warn:#B8791A; --bad:#B9433B; --good-soft:#DFF3E7; --warn-soft:#F8ECD5; --bad-soft:#F9E1DF;
+  --row:#F0F3F6;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F151B; --surface:#161E26; --ink:#E6EBF0; --muted:#98A4B1; --line:#2A3540;
+    --accent:#3DB9A6; --accent-ink:#06211D; --accent-soft:#173630;
+    --good:#4CC37A; --warn:#E0A23E; --bad:#E06A62; --good-soft:#153524; --warn-soft:#3A2C12; --bad-soft:#3E1D1B;
+    --row:#1C262F;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F151B; --surface:#161E26; --ink:#E6EBF0; --muted:#98A4B1; --line:#2A3540;
+  --accent:#3DB9A6; --accent-ink:#06211D; --accent-soft:#173630;
+  --good:#4CC37A; --warn:#E0A23E; --bad:#E06A62; --good-soft:#153524; --warn-soft:#3A2C12; --bad-soft:#3E1D1B;
+  --row:#1C262F;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 "IBM Plex Sans",system-ui,-apple-system,"PingFang SC","Noto Sans SC",sans-serif}
+code,.mono,td.mono,.num{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding:16px 28px;border-bottom:1px solid var(--line);background:var(--surface)}
+header h1{margin:0;font-size:18px;font-weight:600;letter-spacing:.01em}
+header .region{margin-left:auto;color:var(--muted);font-size:13px}
+header .region b{color:var(--ink);font-weight:600}
+.demo-banner{background:#7A5B00;color:#FFE9AE;font-weight:600;font-size:13px;padding:8px 28px;letter-spacing:.02em}
+.errbar{background:var(--bad-soft);color:var(--bad);padding:10px 28px;font-size:13px;font-weight:500;display:flex;gap:12px;align-items:center}
+.errbar button{margin-left:auto}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font:inherit;font-weight:500;cursor:pointer;text-decoration:none}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn.danger{background:var(--bad);border-color:var(--bad);color:#fff}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{display:grid;grid-template-columns:210px minmax(0,1fr) 300px;gap:24px;padding:22px 28px;max-width:1500px;margin:0 auto;align-items:start}
+@media (max-width:1080px){main{grid-template-columns:1fr}}
+h2{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+.step-desc{color:var(--muted);font-size:13px;margin:0 0 18px}
+/* 步骤导航 */
+nav.steps{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px;position:sticky;top:16px}
+nav.steps ol{list-style:none;margin:0;padding:0}
+nav.steps li{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:6px;color:var(--muted);font-size:13px}
+nav.steps li .n{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);font-size:12px;font-weight:600;flex:none}
+nav.steps li.done{color:var(--ink);cursor:pointer}
+nav.steps li.done .n{background:var(--accent-soft);border-color:transparent;color:var(--accent)}
+nav.steps li.active{color:var(--ink);font-weight:600;background:var(--row)}
+nav.steps li.active .n{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+nav.steps li.done:hover{background:var(--row)}
+/* 卡片/tile */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.tile .k{font-size:12px;color:var(--muted);letter-spacing:.04em}
+.tile .v{font-size:20px;font-weight:600;margin-top:4px;word-break:break-all}
+.tile .v.small{font-size:15px}
+.tile.accent{background:var(--accent-soft);border-color:transparent}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px 18px;margin-bottom:16px}
+.card h3{margin:0 0 10px;font-size:14px;font-weight:600}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:6px 14px;font-size:13px}
+.kv .k{color:var(--muted)}
+.kv .v{word-break:break-all}
+.problems{list-style:none;margin:12px 0 0;padding:0}
+.problems li{background:var(--bad-soft);color:var(--bad);border-radius:6px;padding:9px 12px;margin-bottom:8px;font-size:13px}
+.badge-note{display:inline-block;margin-left:8px;font-size:11px;padding:2px 7px;border-radius:999px;background:var(--warn-soft);color:var(--warn);font-weight:500;vertical-align:middle}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+/* 表格 */
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;min-width:640px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.04em;background:var(--row)}
+th.sortable{cursor:pointer;user-select:none}
+th.sortable .arrow{color:var(--accent)}
+tbody tr:last-child td{border-bottom:none}
+td.num,th.num{text-align:right}
+tr.winner td{background:var(--accent-soft)}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:500;line-height:1.5}
+.pill.good{background:var(--good-soft);color:var(--good)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill.neutral{background:var(--row);color:var(--muted)}
+.pill.run{background:var(--accent-soft);color:var(--accent)}
+.score .bar{width:70px;height:6px;border-radius:3px;background:var(--row);overflow:hidden}
+.score .bar i{display:block;height:100%;background:var(--accent)}
+.score .bar i.low{background:var(--bad)}
+.score .bar i.mid{background:var(--warn)}
+/* 表单 */
+.form-grid{display:grid;grid-template-columns:1fr 300px;gap:22px}
+@media (max-width:820px){.form-grid{grid-template-columns:1fr}}
+.inst-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.inst{border:1px solid var(--line);border-radius:8px;padding:11px 13px;cursor:pointer;background:var(--surface)}
+.inst.sel{border-color:var(--accent);background:var(--accent-soft)}
+.inst .t{font-weight:600;font-family:"IBM Plex Mono",monospace}
+.inst .m{font-size:12px;color:var(--muted);margin-top:3px}
+.numrow{display:grid;grid-template-columns:150px 90px 1fr;gap:10px 14px;align-items:center;margin:10px 0}
+.numrow label{font-size:13px}
+.numrow .hint{font-size:12px;color:var(--muted)}
+.numrow input{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);font:inherit}
+.chk{display:flex;gap:9px;align-items:flex-start;margin:9px 0}
+.chk label{font-size:13px}
+.chk .hint{font-size:12px;color:var(--muted);display:block}
+.chk.off{opacity:.55}
+.est{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;position:sticky;top:16px}
+.est .big{font-size:24px;font-weight:600;margin:4px 0 2px}
+pre.summary,pre.cmd{margin:0;padding:12px 14px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font-size:12.5px;white-space:pre-wrap;word-break:break-word;line-height:1.5}
+/* 运行中 */
+.progress{height:10px;border-radius:999px;background:var(--row);overflow:hidden;margin:6px 0 4px}
+.progress i{display:block;height:100%;background:var(--accent);transition:width .3s}
+.round-card{border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:12px 14px;margin-bottom:10px}
+.round-card h4{margin:0 0 8px;font-size:13px;font-weight:600}
+.round-card .line{font-size:13px;margin:3px 0;color:var(--muted)}
+.round-card .line b{color:var(--ink)}
+.iplist{font-family:"IBM Plex Mono",monospace;font-size:12.5px}
+.log{background:#0B1117;color:#C7D2DC;border-radius:8px;padding:12px 14px;height:220px;overflow:auto;font-family:"IBM Plex Mono",monospace;font-size:12px;line-height:1.55;white-space:pre-wrap;margin-top:12px}
+/* winner 卡片 */
+.win-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px}
+.win-card{border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:15px 17px}
+.win-card.top{border-color:var(--accent)}
+.win-card .ip{font-family:"IBM Plex Mono",monospace;font-size:18px;font-weight:600}
+.win-card .meta{font-size:12px;color:var(--muted);margin:3px 0 10px;font-family:"IBM Plex Mono",monospace}
+.win-card .isp{display:grid;grid-template-columns:auto 1fr auto;gap:5px 8px;font-size:12px;align-items:center;margin-bottom:12px}
+.win-card .isp .bar{width:100%;height:6px;border-radius:3px;background:var(--row);overflow:hidden}
+.win-card .isp .bar i{display:block;height:100%;background:var(--accent)}
+.win-card .isp .bar i.low{background:var(--bad)}
+.win-card .isp .bar i.mid{background:var(--warn)}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.notes{font-size:13px;color:var(--muted);margin:0;padding-left:18px}
+.notes li{margin-bottom:6px}
+.empty{color:var(--muted);padding:16px}
+/* 侧栏历史 */
+aside.hist{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px;position:sticky;top:16px}
+aside.hist h3{margin:0 0 10px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+.run-item{border:1px solid var(--line);border-radius:6px;padding:9px 11px;margin-bottom:8px;cursor:pointer;font-size:12.5px}
+.run-item:hover{background:var(--row)}
+.run-item.cur{border-color:var(--accent)}
+.run-item .rid{font-family:"IBM Plex Mono",monospace;font-size:11.5px;word-break:break-all}
+.run-item .sub{color:var(--muted);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+/* 选机弹窗 */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:50}
+.modal{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:22px 24px;max-width:520px;width:100%}
+.modal h3{margin:0 0 12px;font-size:16px}
+.modal .list{font-family:"IBM Plex Mono",monospace;font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:10px 0;max-height:140px;overflow:auto;white-space:pre-wrap}
+footer{padding:14px 28px 28px;color:var(--muted);font-size:12px;text-align:center}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1>跨境优选实例向导</h1>
+  <div class="region">Region <b id="region-label">—</b></div>
+</header>
+<div id="demo-banner" class="demo-banner" hidden>演示模式，不接触 AWS。以下为模拟数据，用于演练完整流程。</div>
+<div id="errbar" class="errbar" hidden><span id="errmsg"></span><button class="btn" id="err-x" type="button">关闭</button></div>
+
+<main>
+  <nav class="steps"><ol id="stepnav"></ol></nav>
+  <div id="content"></div>
+  <aside class="hist">
+    <h3>历史运行 <span id="hist-count" class="badge-note" hidden></span></h3>
+    <div id="hist-list"><div class="empty">暂无运行记录</div></div>
+  </aside>
+</main>
+<footer>本服务只监听本机回环地址，使用本机 AWS 凭证；所有金额均为估算值，实际以账单为准。</footer>
+
+<div id="modal-root"></div>
+
+<script>
+"use strict";
+// ---------- 常量与工具 ----------
+const STEPS = ["环境检查","配置参数","确认计划","运行中","结果与选机","完成"];
+const STOP = {target_score_reached:"达到目标分",max_rounds:"轮次用尽",no_qualified:"无合格候选",
+              cancelled:"已取消（保留在位 winner）",launch_failed:"后续轮次启动失败，保留在位 winner"};
+const VETO = {reputation:"信誉否决",reverse_unreachable:"三网全部丢包",min_backends:"有效 backend 不足",no_public_ip:"无公网 IP"};
+const ISP_CN = {telecom:"电信",unicom:"联通",mobile:"移动"};
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt = v => (v === null || v === undefined || v === "") ? "—" : (typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(1)) : String(v));
+const money = v => (v == null ? "—" : "估算 $" + Number(v).toFixed(3));
+
+const state = {
+  step: 1, reached: 1, demo: false, region: "ap-east-1",
+  options: null, env: null, form: null, plan: null,
+  runId: null, runDetail: null, report: null, selection: null,
+  es: null, pollTimer: null, timerId: null, runStartMs: 0,
+  rounds: [], logLines: [], maxRounds: 3, planTimer: null,
+  sort: {key:"composite", dir:-1}, following: false,
+};
+
+async function api(path, opts){
+  const res = await fetch(path, opts);
+  const ct = res.headers.get("content-type") || "";
+  const data = ct.includes("json") ? await res.json() : await res.text();
+  if (!res.ok) throw new Error((data && data.error) || res.statusText || ("HTTP " + res.status));
+  return data;
+}
+const post = (path, obj) => api(path, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(obj || {})});
+
+function showError(msg){ $("#errmsg").textContent = String(msg); $("#errbar").hidden = false; }
+function clearError(){ $("#errbar").hidden = true; }
+$("#err-x").addEventListener("click", clearError);
+
+// ---------- 导航渲染 ----------
+function renderNav(){
+  const ol = $("#stepnav");
+  ol.innerHTML = STEPS.map((label, i) => {
+    const n = i + 1;
+    const cls = n === state.step ? "active" : (n <= state.reached ? "done" : "todo");
+    return `<li class="${cls}" data-step="${n}"><span class="n">${n}</span><span>${esc(label)}</span></li>`;
+  }).join("");
+  ol.querySelectorAll("li.done").forEach(li => li.addEventListener("click", () => {
+    const n = Number(li.dataset.step);
+    if (n !== state.step) goStep(n);
+  }));
+  $("#region-label").textContent = state.region;
+}
+
+function goStep(n){
+  state.step = n;
+  state.reached = Math.max(state.reached, n);
+  renderNav();
+  clearError();
+  const mounts = {1:mountEnv, 2:mountConfig, 3:mountConfirm, 4:mountRunning, 5:mountResult, 6:mountDone};
+  (mounts[n] || (()=>{}))();
+}
+
+// ---------- 数据加载 ----------
+async function loadOptions(){
+  state.options = await api("/api/options?region=" + encodeURIComponent(state.region));
+  if (!state.form) initForm();
+}
+function initForm(){
+  const d = state.options.defaults;
+  const backends = {};
+  for (const b of state.options.backends){
+    const usable = !(b.needs_key && !b.key_present);
+    backends[b.name] = b.enabled && usable;
+  }
+  state.form = {
+    instance_type: d.instance_type, batch_size: d.batch_size, max_rounds: d.max_rounds,
+    keep_top_k: d.keep_top_k, target_score: d.target_score, protect: !!d.protect, backends,
+  };
+}
+function buildOverrides(){
+  const f = state.form, o = {
+    region: state.region, instance_type: f.instance_type, batch_size: f.batch_size,
+    max_rounds: f.max_rounds, keep_top_k: f.keep_top_k, target_score: f.target_score,
+    protect: f.protect, enable_backends: [], disable_backends: [],
+  };
+  for (const b of state.options.backends){
+    const want = !!f.backends[b.name];
+    if (want && !b.enabled) o.enable_backends.push(b.name);
+    if (!want && b.enabled) o.disable_backends.push(b.name);
+  }
+  return o;
+}
+function planBackends(summary){
+  const line = String(summary || "").split("\n").find(l => l.startsWith("backends:"));
+  return line ? line.slice("backends:".length).split(",").map(s => s.trim()).filter(Boolean) : [];
+}
+
+// ---------- ① 环境检查 ----------
+async function mountEnv(){
+  $("#content").innerHTML = `<h2>第 1 步 · 环境检查</h2><p class="step-desc">确认本机凭证、Region 与网络前提；有问题会在下方红色列出并阻止进入下一步。</p><div id="env-body"><div class="empty">正在检查环境…</div></div>`;
+  try { if (!state.options) await loadOptions(); } catch(e){ showError("加载可选项失败：" + e.message); }
+  await refreshEnv();
+}
+async function refreshEnv(){
+  const body = $("#env-body");
+  if (!body) return;
+  body.innerHTML = `<div class="empty">正在检查环境…</div>`;
+  let env;
+  try { env = await api("/api/env?region=" + encodeURIComponent(state.region)); }
+  catch(e){ showError("环境检查失败：" + e.message); body.innerHTML = `<div class="empty">环境检查失败，请重试。</div>`; return; }
+  state.env = env;
+  const regions = state.options ? state.options.regions : [{code: state.region, name: state.region}];
+  const regionOpts = regions.map(r => `<option value="${esc(r.code)}"${r.code === state.region ? " selected" : ""}>${esc(r.code)} · ${esc(r.name)}</option>`).join("");
+  const caller = env.caller ? `${esc(env.caller.account)} · ${esc(env.caller.arn)}` : "不可用";
+  const vpc = env.default_vpc && env.default_vpc.present ? `有（子网 ${env.default_vpc.subnets} 个）` : "无";
+  const quota = env.vcpu_quota == null ? "未知，不阻断" : fmt(env.vcpu_quota);
+  const running = env.running_instances == null ? "未知" : env.running_instances;
+  const winners = (env.winners || []).length
+    ? `<div class="tablewrap"><table><thead><tr><th>instance</th><th>公网 IP</th><th>机型</th><th>分数</th></tr></thead><tbody>${
+        env.winners.map(w => `<tr><td class="mono">${esc(w.instance_id)}</td><td class="mono">${esc(w.public_ip)}</td><td>${esc(w.instance_type)}</td><td>${esc(w.score)}</td></tr>`).join("")
+      }</tbody></table></div>` : `<div class="empty">该 Region 暂无已标记的 winner 实例。</div>`;
+  const problems = (env.problems || []).length
+    ? `<ul class="problems">${env.problems.map(p => `<li>${esc(p)}</li>`).join("")}</ul>` : "";
+  body.innerHTML = `
+    <div class="card">
+      <h3>凭证与 Region</h3>
+      <div class="kv">
+        <div class="k">Region</div><div class="v"><select id="env-region">${regionOpts}</select></div>
+        <div class="k">账号 / ARN</div><div class="v mono">${caller}</div>
+        <div class="k">默认 VPC</div><div class="v">${esc(vpc)}</div>
+        <div class="k">vCPU 配额</div><div class="v">${esc(String(quota))}</div>
+        <div class="k">运行中实例</div><div class="v">${esc(String(running))}</div>
+        <div class="k">config.yaml</div><div class="v">${env.config_yaml_present ? "已加载" : "未提供（用内置默认）"}</div>
+      </div>
+      ${problems}
+    </div>
+    <div class="card"><h3>已有 winner 实例</h3>${winners}</div>
+    <div class="actions">
+      <button class="btn" id="env-recheck" type="button">重新检查</button>
+      <button class="btn primary" id="env-next" type="button"${env.ok ? "" : " disabled"}>下一步：配置参数</button>
+      ${env.ok ? "" : `<span class="pill bad">存在阻断问题，处理后再继续</span>`}
+    </div>`;
+  $("#env-region").addEventListener("change", async e => {
+    state.region = e.target.value; renderNav();
+    try { await loadOptions(); } catch(err){ showError("切换 Region 后加载可选项失败：" + err.message); }
+    refreshEnv();
+  });
+  $("#env-recheck").addEventListener("click", refreshEnv);
+  const next = $("#env-next");
+  if (next && !next.disabled) next.addEventListener("click", () => goStep(2));
+}
+
+// ---------- ② 配置参数 ----------
+function mountConfig(){
+  const c = $("#content");
+  if (!state.options){ c.innerHTML = `<div class="empty">可选项未就绪，请先完成环境检查。</div>`; return; }
+  const f = state.form;
+  const instCards = state.options.instance_types.map(t => `
+    <div class="inst${t.type === f.instance_type ? " sel" : ""}" data-type="${esc(t.type)}">
+      <div class="t">${esc(t.type)}</div>
+      <div class="m">${t.vcpu} vCPU · ${t.memory_gib} GiB · ${esc(t.arch)}</div>
+      <div class="m">${money(t.hourly_usd)}/小时</div>
+    </div>`).join("");
+  const nums = [
+    ["batch_size","每轮候选数","1","50","每轮启动多少台候选实例"],
+    ["max_rounds","最大轮次","1","10","最多探测几轮"],
+    ["keep_top_k","保留数","1","5","保留多台可在结果页最终挑选"],
+    ["target_score","目标分","50","100","某轮最优达到该分即提前停止"],
+  ].map(([k,label,min,max,hint]) => `
+    <div class="numrow">
+      <label for="n-${k}">${esc(label)}</label>
+      <input id="n-${k}" type="number" min="${min}" max="${max}" value="${esc(String(f[k]))}">
+      <span class="hint">${esc(hint)}（${min}～${max}）</span>
+    </div>`).join("");
+  const backs = state.options.backends.map(b => {
+    const disabled = b.needs_key && !b.key_present;
+    return `<div class="chk${disabled ? " off" : ""}">
+      <input id="b-${esc(b.name)}" type="checkbox"${f.backends[b.name] ? " checked" : ""}${disabled ? " disabled" : ""}>
+      <label for="b-${esc(b.name)}"><b>${esc(b.name)}</b>
+        <span class="hint">${esc(b.desc)}${disabled ? "；在 config.yaml 填写 api_key 后可用" : ""}</span></label>
+    </div>`;
+  }).join("");
+  c.innerHTML = `
+    <h2>第 2 步 · 配置参数</h2>
+    <p class="step-desc">选择机型与探测规模；右侧「预估」随输入实时更新。下一步会给出可确认的运行计划。</p>
+    <div class="form-grid">
+      <div>
+        <div class="card"><h3>机型（单选，默认 t3.nano）</h3><div class="inst-grid" id="inst-grid">${instCards}</div></div>
+        <div class="card"><h3>规模</h3>${nums}</div>
+        <div class="card"><h3>探测 backend</h3>${backs}
+          <div class="chk"><input id="c-protect" type="checkbox"${f.protect ? " checked" : ""}>
+            <label for="c-protect"><b>protect（加固 winner）</b><span class="hint">对选定实例开启 API 禁止 stop/terminate，防止误操作更换公网 IP。</span></label></div>
+        </div>
+        <div class="actions"><button class="btn primary" id="cfg-next" type="button">下一步：确认计划</button></div>
+      </div>
+      <div><div class="est" id="est"><div class="empty">正在估算…</div></div></div>
+    </div>`;
+  c.querySelectorAll(".inst").forEach(node => node.addEventListener("click", () => {
+    state.form.instance_type = node.dataset.type;
+    c.querySelectorAll(".inst").forEach(x => x.classList.toggle("sel", x === node));
+    schedulePlan();
+  }));
+  ["batch_size","max_rounds","keep_top_k","target_score"].forEach(k => {
+    $("#n-" + k).addEventListener("input", e => {
+      const v = e.target.value === "" ? 0 : Number(e.target.value);
+      state.form[k] = (k === "target_score") ? v : Math.round(v);
+      schedulePlan();
+    });
+  });
+  state.options.backends.forEach(b => {
+    const inp = $("#b-" + b.name);
+    if (inp && !inp.disabled) inp.addEventListener("change", e => { state.form.backends[b.name] = e.target.checked; schedulePlan(); });
+  });
+  $("#c-protect").addEventListener("change", e => { state.form.protect = e.target.checked; schedulePlan(); });
+  $("#cfg-next").addEventListener("click", () => goStep(3));
+  schedulePlan();
+}
+function schedulePlan(){
+  const box = $("#est");
+  if (box) box.innerHTML = `<div class="empty">正在估算…</div>`;
+  clearTimeout(state.planTimer);
+  state.planTimer = setTimeout(refreshPlan, 400);
+}
+async function refreshPlan(){
+  let plan;
+  try { plan = await post("/api/plan", buildOverrides()); }
+  catch(e){ const box = $("#est"); if (box) box.innerHTML = `<div class="empty">估算失败：${esc(e.message)}</div>`; return; }
+  state.plan = plan;
+  const box = $("#est");
+  if (!box) return;
+  const backs = planBackends(plan.plan_summary);
+  const count = state.form.batch_size * state.form.max_rounds;
+  box.innerHTML = `
+    <h3 style="margin:0 0 12px;font-size:14px;">预估</h3>
+    <div class="tile accent" style="margin-bottom:10px"><div class="k">估算费用</div><div class="big">${money(plan.estimated_cost_usd)}</div><div class="k">${esc(plan.note || "")}</div></div>
+    <div class="kv" style="grid-template-columns:1fr auto">
+      <div class="k">预计时长</div><div class="v">约 ${esc(String(plan.estimated_minutes))} 分钟</div>
+      <div class="k">将启动候选</div><div class="v">${count} 台（${state.form.batch_size} × ${state.form.max_rounds}）</div>
+      <div class="k">启用 backend</div><div class="v">${backs.length ? esc(backs.join("、")) : "无"}</div>
+    </div>`;
+}
+
+// ---------- ③ 确认计划 ----------
+async function mountConfirm(){
+  $("#content").innerHTML = `<h2>第 3 步 · 确认计划</h2><p class="step-desc">这是一次 dry-run 预览，确认后才会真正启动实例并产生费用。</p><div id="confirm-body"><div class="empty">正在生成计划…</div></div>`;
+  let plan;
+  try { plan = await post("/api/plan", buildOverrides()); }
+  catch(e){ showError("生成计划失败：" + e.message); return; }
+  state.plan = plan;
+  const cfg = plan.config || {};
+  const count = state.form.batch_size * state.form.max_rounds;
+  const sg = cfg.security_group_id || "crossborder-selector-sg";
+  const profile = cfg.instance_profile_name || "crossborder-selector-ssm";
+  const backs = planBackends(plan.plan_summary);
+  $("#confirm-body").innerHTML = `
+    <div class="tiles" style="margin-bottom:16px">
+      <div class="tile accent"><div class="k">将启动候选</div><div class="v">${count} 台</div><div class="k">${state.form.batch_size} × ${state.form.max_rounds}</div></div>
+      <div class="tile"><div class="k">预计时长</div><div class="v small">约 ${esc(String(plan.estimated_minutes))} 分钟</div></div>
+      <div class="tile"><div class="k">估算费用</div><div class="v small">${money(plan.estimated_cost_usd)}</div></div>
+      <div class="tile"><div class="k">启用 backend</div><div class="v small">${backs.length ? esc(backs.join("、")) : "无"}</div></div>
+    </div>
+    <div class="card"><h3>将创建 / 复用</h3><div class="kv">
+      <div class="k">安全组</div><div class="v mono">${esc(sg)}</div>
+      <div class="k">instance profile</div><div class="v mono">${esc(profile)}</div>
+      <div class="k">protect winner</div><div class="v">${cfg.protect ? "是" : "否"}</div>
+    </div></div>
+    <div class="card"><h3>dry-run 计划</h3><pre class="summary">${esc(plan.plan_summary)}</pre></div>
+    <div class="actions">
+      <button class="btn" id="cf-back" type="button">返回修改</button>
+      <button class="btn primary" id="cf-start" type="button">开始运行</button>
+    </div>`;
+  $("#cf-back").addEventListener("click", () => goStep(2));
+  $("#cf-start").addEventListener("click", async () => {
+    const ok = confirm(`将启动 ${count} 台候选实例（${state.form.batch_size} 台 × ${state.form.max_rounds} 轮），${money(plan.estimated_cost_usd)}。确认开始运行？`);
+    if (!ok) return;
+    const btn = $("#cf-start"); btn.disabled = true; btn.textContent = "正在启动…";
+    try {
+      const r = await post("/api/runs", buildOverrides());
+      location.hash = "run=" + r.run_id;
+      startRun(r.run_id, state.form.max_rounds);
+    } catch(e){ showError("启动失败：" + e.message); btn.disabled = false; btn.textContent = "开始运行"; }
+  });
+}
+
+// ---------- ④ 运行中 ----------
+function startRun(id, maxRounds){
+  state.runId = id; state.maxRounds = maxRounds || state.maxRounds;
+  state.rounds = []; state.logLines = []; state.runStartMs = Date.now(); state.following = true;
+  goStep(4);
+  connectSSE(id);
+}
+function mountRunning(){
+  $("#content").innerHTML = `
+    <h2>第 4 步 · 运行中</h2>
+    <p class="step-desc">运行 <span class="mono">${esc(state.runId || "")}</span>；完成后自动进入结果页。关闭页面不影响后台运行，可从历史记录恢复。</p>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>进度：<b id="prog-txt">0 / ${state.maxRounds} 轮</b></div>
+        <div class="mono">已用时 <b id="timer">0:00</b></div>
+      </div>
+      <div class="progress"><i id="prog-bar" style="width:0%"></i></div>
+      <div class="actions" style="margin-top:8px">
+        <button class="btn danger" id="run-cancel" type="button">取消运行</button>
+        <span id="run-note" class="pill neutral" hidden></span>
+      </div>
+    </div>
+    <div id="rounds-box"></div>
+    <div id="fail-box"></div>
+    <div class="log" id="log"></div>`;
+  $("#run-cancel").addEventListener("click", async () => {
+    if (!confirm("确认取消？当前轮结束后停止，已保留的 winner 会留在位。")) return;
+    try { await post(`/api/runs/${state.runId}/cancel`); setNote("已请求取消，当前轮结束后停止"); }
+    catch(e){ showError("取消失败：" + e.message); }
+  });
+  renderRounds(); renderLog(); updateProgress();
+  clearInterval(state.timerId);
+  state.timerId = setInterval(updateTimer, 1000); updateTimer();
+}
+function setNote(t){ const n = $("#run-note"); if (n){ n.textContent = t; n.hidden = false; } }
+function updateTimer(){
+  const t = $("#timer"); if (!t){ clearInterval(state.timerId); return; }
+  const s = Math.max(0, Math.floor((Date.now() - state.runStartMs) / 1000));
+  t.textContent = Math.floor(s/60) + ":" + String(s%60).padStart(2,"0");
+}
+function updateProgress(){
+  const done = state.rounds.filter(r => r.done).length;
+  const pct = state.maxRounds ? Math.min(100, done / state.maxRounds * 100) : 0;
+  const bar = $("#prog-bar"), txt = $("#prog-txt");
+  if (bar) bar.style.width = pct + "%";
+  if (txt) txt.textContent = `${done} / ${state.maxRounds} 轮`;
+}
+function roundOf(n){
+  let r = state.rounds.find(x => x.round === n);
+  if (!r){ r = {round:n, batch_size:0, candidates:[], vetoed:[], kept:[], terminated:0, done:false}; state.rounds.push(r); state.rounds.sort((a,b)=>a.round-b.round); }
+  return r;
+}
+function applyEvent(ev){
+  if (ev.type === "log" || ev.type === "cancelled"){ pushLog(ev.message); if (ev.type==="cancelled") setNote("已请求取消，当前轮结束后停止"); }
+  else if (ev.type === "round_started"){ roundOf(ev.round).batch_size = ev.batch_size; }
+  else if (ev.type === "candidates"){ roundOf(ev.round).candidates = ev.items || []; }
+  else if (ev.type === "vetoed"){ roundOf(ev.round).vetoed = ev.items || []; }
+  else if (ev.type === "round_done"){ const r = roundOf(ev.round); r.kept = ev.kept || []; r.terminated = (ev.terminated || []).length; r.done = true; }
+  else if (ev.type === "finished"){ onFinished(ev); return; }
+  else if (ev.type === "failed"){ showFailed(ev.message, ev.leftover_instance_ids || []); return; }
+  if (state.step === 4){ renderRounds(); renderLog(); updateProgress(); }
+}
+function pushLog(m){ if (m == null) return; state.logLines.push(String(m)); if (state.logLines.length > 500) state.logLines = state.logLines.slice(-500); }
+function renderLog(){ const box = $("#log"); if (!box) return; box.textContent = state.logLines.join("\n"); box.scrollTop = box.scrollHeight; }
+function renderRounds(){
+  const box = $("#rounds-box"); if (!box) return;
+  box.innerHTML = state.rounds.map(r => {
+    const cand = r.candidates.length, veto = r.vetoed.length;
+    const vetoTxt = veto ? r.vetoed.map(v => `${esc(v.public_ip)}（${esc(VETO[v.reason] || v.reason)}）`).join("、") : "无";
+    const keptTxt = r.kept.length ? r.kept.map(k => `${esc(k.public_ip)} · ${fmt(k.composite)}`).join("、") : "无";
+    return `<div class="round-card"><h4>第 ${r.round} 轮${r.done ? "" : "（进行中）"}</h4>
+      <div class="line">启动 <b>${r.batch_size || cand}</b> 台 → 否决 <b>${veto}</b> 台：<span class="iplist">${vetoTxt}</span></div>
+      <div class="line">保留：<span class="iplist">${keptTxt}</span></div>
+      <div class="line">终止 <b>${r.terminated}</b> 台</div></div>`;
+  }).join("") || `<div class="empty">等待第一轮启动…</div>`;
+}
+function connectSSE(id){
+  closeStreams();
+  let es;
+  try { es = new EventSource(`/api/runs/${id}/events`); }
+  catch(e){ startPolling(id); return; }
+  state.es = es;
+  es.onmessage = e => { try { applyEvent(JSON.parse(e.data)); } catch(_){} };
+  es.onerror = () => { es.close(); state.es = null; if (state.following) startPolling(id); };
+}
+function startPolling(id){
+  if (state.pollTimer) return;
+  pushLog("[前端] 实时连接中断，改用轮询兜底（每 3 秒）");
+  if (state.step === 4) renderLog();
+  const tick = async () => {
+    let d;
+    try { d = await api(`/api/runs/${id}`); } catch(e){ return; }
+    state.rounds = []; state.logLines = state.logLines.filter(l => l.startsWith("[前端]"));
+    (d.events || []).forEach(applyEventQuiet);
+    if (state.step === 4){ renderRounds(); renderLog(); updateProgress(); }
+    if (d.state && d.state !== "running"){
+      clearInterval(state.pollTimer); state.pollTimer = null;
+      if (d.state === "failed") showFailed(d.error, d.leftover_instance_ids || []);
+      else { state.runDetail = d; onFinished({stop_reason:d.stop_reason, winners:d.winners}); }
+    }
+  };
+  state.pollTimer = setInterval(tick, 3000); tick();
+}
+function applyEventQuiet(ev){ if (ev.type !== "finished" && ev.type !== "failed") applyEvent(ev); }
+function closeStreams(){
+  if (state.es){ state.es.close(); state.es = null; }
+  if (state.pollTimer){ clearInterval(state.pollTimer); state.pollTimer = null; }
+}
+function onFinished(){
+  state.following = false; closeStreams(); clearInterval(state.timerId);
+  enterResult(state.runId);
+  refreshHistory();
+}
+function showFailed(message, leftover){
+  state.following = false; closeStreams(); clearInterval(state.timerId);
+  if (state.step !== 4) goStep(4);
+  const box = $("#fail-box"); if (!box) return;
+  box.innerHTML = `<div class="card" style="border-color:var(--bad)">
+    <h3 style="color:var(--bad)">运行失败</h3>
+    <p style="font-size:13px">${esc(message || "未知错误")}</p>
+    ${leftover.length ? `<p style="font-size:13px">遗留实例（未终止）：</p><div class="iplist">${leftover.map(esc).join(", ")}</div>` : `<p style="font-size:13px">没有检测到遗留实例。</p>`}
+    <div class="actions"><button class="btn danger" id="fail-clean" type="button"${leftover.length ? "" : " disabled"}>立即清理</button>
+      <span id="clean-note" class="pill neutral" hidden></span></div>
+  </div>`;
+  const btn = $("#fail-clean");
+  if (btn && leftover.length) btn.addEventListener("click", async () => {
+    btn.disabled = true; btn.textContent = "清理中…";
+    try { const r = await post("/api/cleanup", {run_id: state.runId});
+      const note = $("#clean-note"); note.hidden = false; note.textContent = `已终止 ${r.terminated.length} 台：${r.terminated.join(", ") || "无"}`;
+    } catch(e){ showError("清理失败：" + e.message); btn.disabled = false; btn.textContent = "立即清理"; }
+  });
+  refreshHistory();
+}
+
+// ---------- ⑤ 结果与选机 ----------
+async function enterResult(id){
+  state.runId = id; state.step = 5; state.reached = Math.max(state.reached, 5); renderNav();
+  $("#content").innerHTML = `<h2>第 5 步 · 结果与选机</h2><div class="empty">正在载入报告…</div>`;
+  try {
+    state.runDetail = await api(`/api/runs/${id}`);
+    state.report = await api(`/api/runs/${id}/report.json`);
+  } catch(e){ showError("载入报告失败：" + e.message); $("#content").innerHTML = `<div class="empty">载入报告失败。</div>`; return; }
+  mountResult();
+}
+function mountResult(){
+  const c = $("#content"); const d = state.report;
+  if (!d){ c.innerHTML = `<div class="empty">尚无报告数据。</div>`; return; }
+  const winners = d.winners || [];
+  const tiles = [
+    ["停止原因", STOP[d.stop_reason] || d.stop_reason || "—"],
+    ["完成轮次", d.rounds_completed],
+    ["候选总数", (d.candidates || []).length],
+    ["winner 数", winners.length],
+  ];
+  let winnerHtml;
+  if (winners.length){
+    winnerHtml = `<div class="win-grid">${winners.map((w, i) => {
+      const s = w.isp_scores || {};
+      const isp = ["telecom","unicom","mobile"].map(k => `<span>${ISP_CN[k]}</span>${scoreBar(s[k])}<span class="num">${fmt(s[k])}</span>`).join("");
+      return `<div class="win-card${i===0?" top":""}">
+        <div class="ip">${esc(w.public_ip)}</div>
+        <div class="meta">${esc(w.instance_id)} · ${esc(w.prefix || "")} · 第 ${fmt(w.round)} 轮</div>
+        <div class="isp">${isp}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <span>综合分 <b>${fmt(w.composite)}</b></span>
+          <button class="btn primary" data-sel="${esc(w.instance_id)}" type="button">选定这台</button>
+        </div></div>`;
+    }).join("")}</div>`;
+  } else {
+    winnerHtml = `<div class="card"><h3>本次没有合格候选</h3>
+      <p class="step-desc">常见原因：候选 IP 信誉被全部否决，或到大陆三网全部不可达。可回到配置调整机型、增大每轮数量或轮次后重试。</p>
+      <div class="actions"><button class="btn primary" id="res-reconfig" type="button">回到配置重新运行</button></div></div>`;
+  }
+  c.innerHTML = `
+    <h2>第 5 步 · 结果与选机</h2>
+    <p class="step-desc">从保留的候选中选定一台作为出口机，其余可一并终止。选定为不可逆操作，会二次确认。</p>
+    <div class="tiles" style="margin-bottom:18px">${tiles.map(([k,v]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v small">${esc(String(v == null ? "—" : v))}</div></div>`).join("")}</div>
+    <section style="margin-bottom:22px"><h2>保留候选</h2>${winnerHtml}</section>
+    <section style="margin-bottom:22px"><h2>全部候选</h2><div class="tablewrap" id="cand-table"></div></section>
+    <section><h2>Prefix 统计（合格候选）</h2><div class="tablewrap" id="pfx-table"></div></section>`;
+  c.querySelectorAll("[data-sel]").forEach(b => b.addEventListener("click", () => openSelectModal(b.dataset.sel)));
+  const rc = $("#res-reconfig"); if (rc) rc.addEventListener("click", () => goStep(2));
+  renderCandTable(); renderPfxTable();
+}
+function scoreBar(v){
+  if (v == null) return `<span class="bar"></span>`;
+  const cls = v >= 85 ? "" : (v >= 60 ? "mid" : "low");
+  return `<span class="bar"><i class="${cls}" style="width:${Math.max(0,Math.min(100,v))}%"></i></span>`;
+}
+function statusCell(c){
+  if (c.kept) return `<span class="pill good">winner</span>`;
+  if (c.qualified === true) return `<span class="pill neutral">合格，未保留</span>`;
+  const r = c.veto_reason || "未合格";
+  return `<span class="pill bad">${esc(VETO[r] || r)}</span>`;
+}
+function renderCandTable(){
+  const box = $("#cand-table"); if (!box) return;
+  const cols = [["round","轮次",1],["public_ip","公网 IP",0],["prefix","prefix",0],["composite","综合分",1],["status","状态",0],
+               ["reverse_telecom","电信",1],["reverse_unicom","联通",1],["reverse_mobile","移动",1]];
+  const s = state.sort;
+  const arrow = k => k === s.key ? (s.dir < 0 ? " ▼" : " ▲") : "";
+  const head = cols.map(([k,label,num]) => k === "status"
+    ? `<th>${esc(label)}</th>`
+    : `<th class="sortable${num?" num":""}" data-key="${k}">${esc(label)}<span class="arrow">${arrow(k)}</span></th>`).join("");
+  const rows = (state.report.candidates || []).slice().sort((a,b) => {
+    const va = a[s.key], vb = b[s.key];
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1; if (vb == null) return -1;
+    if (typeof va === "number" && typeof vb === "number") return (va - vb) * s.dir;
+    return String(va).localeCompare(String(vb)) * s.dir;
+  });
+  const body = rows.length ? rows.map(c => `<tr${c.kept?' class="winner"':''}>
+    <td class="num">${fmt(c.round)}</td><td class="mono">${esc(c.public_ip)}</td><td class="mono">${esc(c.prefix)}</td>
+    <td class="num">${c.qualified ? fmt(c.composite) : "—"}</td><td>${statusCell(c)}</td>
+    <td class="num">${fmt(c.reverse_telecom)}</td><td class="num">${fmt(c.reverse_unicom)}</td><td class="num">${fmt(c.reverse_mobile)}</td>
+    </tr>`).join("") : `<tr><td colspan="8" class="empty">无候选数据</td></tr>`;
+  box.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+  box.querySelectorAll("th.sortable").forEach(th => th.addEventListener("click", () => {
+    const k = th.dataset.key;
+    if (state.sort.key === k) state.sort.dir *= -1; else state.sort = {key:k, dir:-1};
+    renderCandTable();
+  }));
+}
+function renderPfxTable(){
+  const box = $("#pfx-table"); if (!box) return;
+  const pfx = Object.entries(state.report.prefixes || {}).sort((a,b) => b[1].best_composite - a[1].best_composite);
+  const body = pfx.length ? pfx.map(([p,v]) => `<tr><td class="mono">${esc(p)}</td><td class="num">${v.samples}</td><td class="num">${fmt(v.mean_composite)}</td><td class="num">${fmt(v.best_composite)}</td></tr>`).join("")
+    : `<tr><td colspan="4" class="empty">无 prefix 统计</td></tr>`;
+  box.innerHTML = `<table><thead><tr><th>prefix</th><th class="num">样本</th><th class="num">均值</th><th class="num">最高</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+function openSelectModal(instanceId){
+  const winners = (state.report.winners || []).map(w => w.instance_id);
+  const others = winners.filter(x => x !== instanceId);
+  const defProtect = !!(state.runDetail && state.runDetail.config && state.runDetail.config.protect);
+  const root = $("#modal-root");
+  root.innerHTML = `<div class="overlay"><div class="modal">
+    <h3>选定 ${esc(instanceId)}</h3>
+    <p style="font-size:13px;color:var(--muted)">确认后将把该实例标记为最终 winner。以下为本次其余保留候选：</p>
+    <div class="list">${others.length ? others.map(esc).join("\n") : "（无其它保留候选）"}</div>
+    <div class="chk"><input id="m-term" type="checkbox"${others.length ? " checked" : ""}${others.length ? "" : " disabled"}>
+      <label for="m-term">终止其余 ${others.length} 台保留候选</label></div>
+    <div class="chk"><input id="m-protect" type="checkbox"${defProtect ? " checked" : ""}>
+      <label for="m-protect">对选定实例开启 protect（禁止 API stop/terminate）</label></div>
+    <div class="actions" style="justify-content:flex-end">
+      <button class="btn" id="m-cancel" type="button">取消</button>
+      <button class="btn primary" id="m-ok" type="button">确认选定</button>
+    </div></div></div>`;
+  $("#m-cancel").addEventListener("click", () => root.innerHTML = "");
+  $("#m-ok").addEventListener("click", async () => {
+    const btn = $("#m-ok"); btn.disabled = true; btn.textContent = "处理中…";
+    try {
+      const sel = await post(`/api/runs/${state.runId}/select`, {
+        instance_id: instanceId, protect: $("#m-protect").checked, terminate_others: $("#m-term").checked });
+      state.selection = sel; root.innerHTML = ""; goStep(6);
+    } catch(e){ showError("选定失败：" + e.message); btn.disabled = false; btn.textContent = "确认选定"; }
+  });
+}
+
+// ---------- ⑥ 完成 ----------
+function mountDone(){
+  const c = $("#content"); const sel = state.selection;
+  if (!sel){ c.innerHTML = `<div class="empty">尚未选定实例。</div>`; return; }
+  const w = (state.report.winners || []).find(x => x.instance_id === sel.selected) || {};
+  const id = state.runId;
+  const tags = [`crossborder-winner=true`];
+  if (w.composite != null) tags.push(`crossborder-score=${w.composite}`);
+  const cmdStop = `aws ec2 modify-instance-attribute --region ${state.region} --instance-id ${sel.selected} --no-disable-api-stop`;
+  const cmdTerm = `aws ec2 modify-instance-attribute --region ${state.region} --instance-id ${sel.selected} --no-disable-api-termination`;
+  c.innerHTML = `
+    <h2>第 6 步 · 完成</h2>
+    <p class="step-desc">已选定出口实例。请按下方建议接入，并保留报告备查。</p>
+    <div class="card"><h3>选定实例</h3><div class="kv">
+      <div class="k">instance</div><div class="v mono">${esc(sel.selected)}</div>
+      <div class="k">公网 IP</div><div class="v mono">${esc(w.public_ip || "")}</div>
+      <div class="k">prefix</div><div class="v mono">${esc(w.prefix || "")}</div>
+      <div class="k">综合分</div><div class="v">${fmt(w.composite)}</div>
+      <div class="k">protect</div><div class="v">${sel.protected ? "已开启" : "未开启"}</div>
+      <div class="k">已终止其余</div><div class="v mono">${(sel.terminated || []).join(", ") || "无"}</div>
+      <div class="k">标签</div><div class="v"><div class="tags">${tags.map(t => `<span class="pill neutral">${esc(t)}</span>`).join("")}</div></div>
+    </div></div>
+    <div class="card"><h3>接入建议</h3><ul class="notes">
+      <li>不要 stop 这台实例：stop/start 会更换公网 IPv4，reboot 不会。</li>
+      <li>只让它承担代理 / 出口用途，不要在上面跑其它业务。</li>
+      <li>它已移除 run-id 标签并标记 crossborder-winner=true，cleanup 不会终止它。</li>
+      <li>如需解除 protect（先解 stop 再解 terminate）：</li>
+    </ul>
+    <pre class="cmd">${esc(cmdStop)}\n${esc(cmdTerm)}</pre></div>
+    <div class="card"><h3>下载报告</h3><div class="actions" style="margin-top:0">
+      <a class="btn" href="/api/runs/${encodeURIComponent(id)}/report.json" download>report.json</a>
+      <a class="btn" href="/api/runs/${encodeURIComponent(id)}/report.md" download>report.md</a>
+      <a class="btn" href="/api/runs/${encodeURIComponent(id)}/report.csv" download>candidates.csv</a>
+    </div></div>
+    <div class="actions">
+      <button class="btn" id="done-hist" type="button">查看历史运行</button>
+      <button class="btn primary" id="done-again" type="button">再选一次</button>
+    </div>`;
+  $("#done-again").addEventListener("click", () => enterResult(state.runId));
+  $("#done-hist").addEventListener("click", refreshHistory);
+}
+
+// ---------- 历史运行侧栏 ----------
+async function refreshHistory(){
+  let runs;
+  try { runs = await api("/api/runs"); } catch(e){ return; }
+  const list = $("#hist-list"); const cnt = $("#hist-count");
+  cnt.hidden = !runs.length; cnt.textContent = runs.length;
+  if (!runs.length){ list.innerHTML = `<div class="empty">暂无运行记录</div>`; return; }
+  const pillClass = {finished:"good", cancelled:"warn", failed:"bad", running:"run", unknown:"neutral"};
+  const pillText = {finished:"已完成", cancelled:"已取消", failed:"失败", running:"运行中", unknown:"状态未知"};
+  list.innerHTML = runs.map(r => {
+    const nw = (r.winners || []).length;
+    return `<div class="run-item${r.run_id === state.runId ? " cur" : ""}" data-run="${esc(r.run_id)}" data-state="${esc(r.state)}">
+      <div class="rid">${esc(r.run_id)}</div>
+      <div class="sub"><span class="pill ${pillClass[r.state] || "neutral"}">${esc(pillText[r.state] || r.state)}</span>
+        <span>${esc(r.region || "")}</span><span>winner ${nw}</span></div></div>`;
+  }).join("");
+  list.querySelectorAll(".run-item").forEach(item => item.addEventListener("click", () => openRun(item.dataset.run, item.dataset.state)));
+}
+async function openRun(id, knownState){
+  clearError(); closeStreams();
+  let d;
+  try { d = await api(`/api/runs/${id}`); } catch(e){ showError("载入运行失败：" + e.message); return; }
+  state.runId = id; state.runDetail = d; location.hash = "run=" + id;
+  const st = d.state || knownState;
+  if (st === "running"){
+    state.maxRounds = (d.config && d.config.max_rounds) || state.maxRounds;
+    state.rounds = []; state.logLines = []; state.runStartMs = Date.parse(d.started_at) || Date.now(); state.following = true;
+    (d.events || []).forEach(applyEventQuiet);
+    goStep(4); connectSSE(id);
+  } else if (st === "failed"){
+    goStep(4); showFailed(d.error, d.leftover_instance_ids || []);
+  } else if (st === "unknown"){
+    showError("该运行状态未知（服务可能重启过）。如担心有遗留实例，请对其执行清理。");
+    try { state.report = await api(`/api/runs/${id}/report.json`); enterResult(id); }
+    catch(_){ goStep(4); showFailed("服务重启后无法确认该运行状态。", []); }
+  } else {
+    enterResult(id);
+  }
+}
+
+// ---------- 初始化 ----------
+async function init(){
+  try { const meta = await api("/api/meta"); state.demo = !!meta.demo; if (state.demo) $("#demo-banner").hidden = false; }
+  catch(e){ /* meta 失败不阻断 */ }
+  renderNav();
+  try { await loadOptions(); } catch(e){ showError("加载可选项失败：" + e.message); }
+  await refreshHistory();
+  setInterval(refreshHistory, 10000);
+  const m = location.hash.match(/run=([A-Za-z0-9._-]+)/);
+  if (m){ openRun(m[1]); return; }
+  let runs = [];
+  try { runs = await api("/api/runs"); } catch(_){}
+  const running = runs.find(r => r.state === "running");
+  if (running){ openRun(running.run_id, "running"); return; }
+  goStep(1);
+}
+window.addEventListener("DOMContentLoaded", init);
+</script>
+</body>
+</html>

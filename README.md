@@ -61,7 +61,7 @@ scripts/start_web.sh --demo                       # 演示模式：模拟数据�
 scripts/start_web.sh --port 8792 --no-browser     # 换端口、不自动打开浏览器
 ```
 
-也可直接运行 `python -m crossborder_selector.web [--host --port --output-dir --config --demo --no-browser]`。
+也可直接运行 `python -m crossborder_selector.web [--host --port --output-dir --config --demo --no-browser --allow-remote]`。默认只监听 127.0.0.1；`--host` 指定非回环地址时必须同时加 `--allow-remote`（服务无认证，风险自负），否则退出码 2。
 
 向导分六步：
 

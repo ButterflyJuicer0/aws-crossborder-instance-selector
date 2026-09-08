@@ -18,12 +18,20 @@ def main(argv=None) -> int:
     p.add_argument("--config")
     p.add_argument("--demo", action="store_true", help="演示模式：不接触 AWS，用模拟数据走完整流程")
     p.add_argument("--no-browser", action="store_true")
+    p.add_argument("--allow-remote", action="store_true",
+                   help="允许绑定非回环地址；服务无认证，风险自负")
     a = p.parse_args(argv)
+    if a.host not in ("127.0.0.1", "localhost", "::1"):
+        if not a.allow_remote:
+            print(f"拒绝绑定非回环地址 {a.host}：Web 向导无认证，任何能访问该端口的人都能启动/终止实例。"
+                  " 如确需远程访问，请显式加 --allow-remote。", file=sys.stderr)
+            return 2
+        print(f"警告：已绑定 {a.host}，服务无认证，任何能访问该端口的人都能启动/终止实例。", file=sys.stderr)
     api = Api(factory=demo_factory if a.demo else default_factory, config_path=a.config)
     mgr = RunManager(api, a.output_dir)
     if a.demo:
         install_demo(mgr)
-    server = make_server(a.host, a.port, api, mgr, demo=a.demo)
+    server = make_server(a.host, a.port, api, mgr, demo=a.demo, allow_remote=a.allow_remote)
     url = f"http://{a.host}:{server.server_address[1]}"
     print(f"Web 向导：{url}" + ("（演示模式，不接触 AWS）" if a.demo else ""))
     if not a.no_browser:

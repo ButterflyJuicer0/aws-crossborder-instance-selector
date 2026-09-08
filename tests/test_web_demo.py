@@ -59,3 +59,11 @@ def test_install_demo_runs_end_to_end(tmp_path):
         assert rec.state == "finished" and rec.winners and (tmp_path / "out" / run_id / "report.md").exists()
     finally:
         restore()
+
+
+def test_main_rejects_non_loopback_without_allow_remote(monkeypatch):
+    from crossborder_selector.web import __main__ as web_main
+    calls = {"n": 0}
+    monkeypatch.setattr(web_main, "make_server", lambda *a, **kw: calls.__setitem__("n", calls["n"] + 1))
+    assert web_main.main(["--host", "0.0.0.0", "--no-browser", "--port", "0"]) == 2
+    assert calls["n"] == 0  # 在建服务之前就已拒绝

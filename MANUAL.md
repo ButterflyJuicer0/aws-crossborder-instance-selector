@@ -77,7 +77,9 @@ scripts/start_web.sh                              # 默认 http://127.0.0.1:8765
 scripts/start_web.sh --port 8792 --no-browser     # 换端口、不自动打开浏览器
 ```
 
-底层等价于 `python -m crossborder_selector.web`，可用参数为 `--host`、`--port`、`--output-dir`、`--config`、`--demo`、`--no-browser`。服务只监听 127.0.0.1，使用本机 AWS 凭证，不做登录认证。
+底层等价于 `python -m crossborder_selector.web`，可用参数为 `--host`、`--port`、`--output-dir`、`--config`、`--demo`、`--no-browser`、`--allow-remote`。服务默认只监听 127.0.0.1，使用本机 AWS 凭证，不做登录认证。
+
+`--host` 若指定非回环地址（非 127.0.0.1/localhost/::1），必须同时加 `--allow-remote`，否则直接退出（退出码 2）。这是有意的安全护栏：服务无认证，任何能访问该端口的人都能启动/终止实例，确需远程访问时请自行在网络层限制来源。未加 `--allow-remote` 时，非回环 `Host` 的任意请求、以及跨站 `Origin` 的 POST 都会被拒绝。
 
 六步流程：
 

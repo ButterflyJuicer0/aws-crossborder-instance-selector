@@ -4,7 +4,7 @@ import json
 import os
 import queue
 import threading
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 
 from crossborder_selector.aws.ec2 import Ec2Manager
 from crossborder_selector.aws.infra import ensure_infra
@@ -46,8 +46,9 @@ class RunRecord:
 
 
 class RunManager:
-    def __init__(self, api, output_dir, orchestrator_factory=None, clock=utc_now_iso):
+    def __init__(self, api, output_dir, orchestrator_factory=None, clock=utc_now_iso, history_file=None):
         self.api, self.output_dir, self.clock = api, output_dir, clock
+        self.history_file = history_file
         self.orchestrator_factory = orchestrator_factory or Orchestrator
         self._records, self._subs, self._flags = {}, {}, {}
         self._lock = threading.Lock()
@@ -117,11 +118,16 @@ class RunManager:
     def start(self, overrides: dict) -> str:
         cfg = self.api.load(overrides)
         run_id = new_run_id()
+        # record.config 保留用户的 protect 选择（供 select 时默认勾选），但 Web 运行阶段不加固任何
+        # 实例（加固只在 select 对选定实例执行）；history_file 若被注入则改写，避免污染仓库 history/。
         rec = RunRecord(run_id, "running", cfg.region, self.clock(), redact(asdict(cfg)))
+        run_cfg = replace(cfg, protect=False)
+        if self.history_file:
+            run_cfg = replace(run_cfg, history_file=self.history_file)
         self._records[run_id] = rec
         self._flags[run_id] = threading.Event()
         self._persist(rec)
-        threading.Thread(target=self._run, args=(rec, cfg), daemon=True, name=f"run-{run_id}").start()
+        threading.Thread(target=self._run, args=(rec, run_cfg), daemon=True, name=f"run-{run_id}").start()
         return run_id
 
     def cancel(self, run_id):

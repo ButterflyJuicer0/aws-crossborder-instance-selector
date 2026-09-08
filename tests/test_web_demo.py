@@ -7,7 +7,8 @@ from crossborder_selector.web.runs import RunManager
 
 
 def test_demo_orchestrator_emits_events_and_reports(tmp_path):
-    cfg = load_config(None, {"batch_size": 4, "max_rounds": 2, "keep_top_k": 2, "target_score": 99, "output_dir": str(tmp_path)})
+    cfg = load_config(None, {"batch_size": 4, "max_rounds": 2, "keep_top_k": 2, "target_score": 99,
+                             "output_dir": str(tmp_path), "history_file": str(tmp_path / "hist.json")})
     events = []
     orch = DemoOrchestrator(cfg, None, None, [], [], lambda ip: "", None, "xb-demo", log=lambda m: None,
                             on_event=events.append, should_stop=lambda: False, step_delay=0)

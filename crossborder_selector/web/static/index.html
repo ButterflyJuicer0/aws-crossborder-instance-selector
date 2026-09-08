@@ -360,7 +360,7 @@ function mountConfig(){
         <div class="card"><h3>规模</h3>${nums}</div>
         <div class="card"><h3>探测 backend</h3>${backs}
           <div class="chk"><input id="c-protect" type="checkbox"${f.protect ? " checked" : ""}>
-            <label for="c-protect"><b>protect（加固 winner）</b><span class="hint">对选定实例开启 API 禁止 stop/terminate，防止误操作更换公网 IP。</span></label></div>
+            <label for="c-protect"><b>protect（加固 winner）</b><span class="hint">选定后才对选定实例开启 API 禁止 stop/terminate；运行阶段不加固任何实例，防止误操作更换公网 IP。</span></label></div>
         </div>
         <div class="actions"><button class="btn primary" id="cfg-next" type="button">下一步：确认计划</button></div>
       </div>

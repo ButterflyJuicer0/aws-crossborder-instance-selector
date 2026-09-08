@@ -50,7 +50,8 @@ def _patched(monkeypatch, tmp_path, cfg):
     monkeypatch.setattr("crossborder_selector.web.runs.build_sources", lambda c: [])
     monkeypatch.setattr("crossborder_selector.web.runs.load_ip_ranges", lambda cache_path=None: [])
     monkeypatch.setattr("crossborder_selector.web.runs.SsmRunner", lambda client: object())
-    return RunManager(FakeApi(cfg), str(tmp_path / "out"), orchestrator_factory=FakeOrch)
+    return RunManager(FakeApi(cfg), str(tmp_path / "out"), orchestrator_factory=FakeOrch,
+                      history_file=str(tmp_path / "hist.json"))
 
 
 def _wait(mgr, run_id, states=("finished", "failed", "cancelled"), timeout=5):
@@ -84,6 +85,33 @@ def test_start_runs_and_persists(monkeypatch, tmp_path):
     assert len(lines) == 4 and json.loads(lines[-1])["type"] == "finished"
     assert mgr.winner_ids(run_id) == ["i-1"]
     assert "api_key" not in json.dumps(rec.config)
+
+
+def test_run_cfg_disables_protect_but_record_keeps_choice(monkeypatch, tmp_path):
+    from crossborder_selector.config import load_config
+    FakeOrch.behaviour = "ok"
+    mgr = _patched(monkeypatch, tmp_path, load_config(None, {"region": "ap-east-1", "protect": True}))
+    captured = {}
+    class CapOrch(FakeOrch):
+        def __init__(self, cfg, *a, **kw):
+            captured["protect"] = cfg.protect
+            super().__init__(cfg, *a, **kw)
+    mgr.orchestrator_factory = CapOrch
+    run_id = mgr.start({"region": "ap-east-1", "protect": True})
+    rec = _wait(mgr, run_id)
+    assert captured["protect"] is False           # 运行阶段不加固任何实例
+    assert rec.config["protect"] is True          # 用户的 protect 选择被保留在 record.config
+
+
+def test_history_file_override_isolates_repo_history(monkeypatch, tmp_path):
+    from crossborder_selector.config import load_config
+    FakeOrch.behaviour = "ok"
+    monkeypatch.chdir(tmp_path)
+    mgr = _patched(monkeypatch, tmp_path, load_config(None, {"region": "ap-east-1"}))
+    run_id = mgr.start({"region": "ap-east-1"})
+    _wait(mgr, run_id)
+    assert os.path.exists(tmp_path / "hist.json")
+    assert not os.path.exists(tmp_path / "history" / "prefix_stats.json")
 
 
 def test_subscribe_receives_live_events(monkeypatch, tmp_path):

@@ -170,16 +170,19 @@ def demo_ensure_infra(ec2, iam, ssm, cfg) -> Infra:
 
 def install_demo(run_manager, step_delay=0.4):
     """把 RunManager 及其 runs 模块的 AWS 入口替换为 demo 版本；返回 restore() 撤销。"""
+    import os
     import crossborder_selector.web.runs as runs_mod
     saved = (runs_mod.ensure_infra, runs_mod.build_backends, runs_mod.load_ip_ranges,
-             run_manager.orchestrator_factory)
+             run_manager.orchestrator_factory, run_manager.history_file)
     runs_mod.ensure_infra = demo_ensure_infra
     runs_mod.build_backends = lambda cfg, ssm: []
     runs_mod.load_ip_ranges = lambda cache_path=None: []
     run_manager.orchestrator_factory = lambda *a, **kw: DemoOrchestrator(*a, step_delay=step_delay, **kw)
+    # 演示模式把 prefix 历史写进 output_dir，绝不污染仓库 history/prefix_stats.json
+    run_manager.history_file = os.path.join(run_manager.output_dir, "prefix_stats.json")
 
     def restore():
         (runs_mod.ensure_infra, runs_mod.build_backends, runs_mod.load_ip_ranges,
-         run_manager.orchestrator_factory) = saved
+         run_manager.orchestrator_factory, run_manager.history_file) = saved
 
     return restore

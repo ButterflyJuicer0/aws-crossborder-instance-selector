@@ -146,12 +146,27 @@ class Api:
         m = Ec2Manager(self.factory(cfg)["ec2"])
         if protect:
             m.protect(instance_id)
-        others = [w for w in winner_ids if w != instance_id]
-        terminated = []
-        if terminate_others and others:
-            m.terminate(others)
-            terminated = others
+        terminated = self._terminate_others(m, instance_id, winner_ids) if terminate_others else []
         return {"selected": instance_id, "protected": bool(protect), "terminated": terminated}
+
+    def terminate_others(self, selected: str, region: str, winner_ids: list) -> dict:
+        cfg = self.load({"region": region})
+        m = Ec2Manager(self.factory(cfg)["ec2"])
+        return {"terminated": self._terminate_others(m, selected, winner_ids)}
+
+    @staticmethod
+    def _terminate_others(m: Ec2Manager, selected: str, winner_ids: list) -> list:
+        """终止 selected 之外的其余保留候选：先逐台解除保护再终止；终止失败抛 409。"""
+        others = [w for w in winner_ids if w != selected]
+        if not others:
+            return []
+        for iid in others:
+            m.unprotect(iid)
+        try:
+            m.terminate(others)
+        except ClientError as e:
+            raise ApiError(409, f"无法终止其余候选：{','.join(others)}。{e}。请手工处理或使用 cleanup。")
+        return others
 
     def cleanup(self, run_id: str, region: str) -> dict:
         cfg = self.load({"region": region})

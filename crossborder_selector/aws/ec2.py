@@ -78,6 +78,14 @@ class Ec2Manager:
         except ClientError:
             pass  # 少数机型/老 API 不支持 stop protection，不致命
 
+    def unprotect(self, instance_id):
+        # 与 protect 对称：终止候选前先解除保护，逐个属性 best-effort，忽略 ClientError
+        for attr in ("DisableApiTermination", "DisableApiStop"):
+            try:
+                self.ec2.modify_instance_attribute(InstanceId=instance_id, **{attr: {"Value": False}})
+            except ClientError:
+                pass
+
     def has_winners(self) -> bool:
         r = self.ec2.describe_instances(Filters=[
             {"Name": f"tag:{WINNER_TAG}", "Values": ["true"]},

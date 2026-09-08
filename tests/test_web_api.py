@@ -105,3 +105,49 @@ def test_plan_rejects_bad_override(tmp_path):
 
 def test_redact_drops_secret_keys_recursively():
     assert redact({"a": {"api_key": "x", "b": 1}, "api_token": "y"}) == {"a": {"b": 1}}
+
+
+class FakeSelectEc2:
+    """记录 modify_instance_attribute / terminate_instances 调用；可让终止抛错。"""
+    def __init__(self, terminate_error=None):
+        self.calls, self.terminate_error = [], terminate_error
+    def modify_instance_attribute(self, **kw):
+        self.calls.append(("modify", kw)); return {}
+    def terminate_instances(self, **kw):
+        self.calls.append(("terminate", kw))
+        if self.terminate_error:
+            raise self.terminate_error
+        return {}
+
+
+def _select_api(tmp_path, terminate_error=None):
+    ec2 = FakeSelectEc2(terminate_error)
+    clients = {"sts": FakeSts(), "ec2": ec2, "service-quotas": FakeQuotas(), "iam": object(), "ssm": object()}
+    return Api(factory=lambda cfg: clients, cwd=str(tmp_path)), ec2
+
+
+def test_select_protects_winner_unprotects_then_terminates_others(tmp_path):
+    api, ec2 = _select_api(tmp_path)
+    r = api.select("xb-r", "i-a", True, True, "ap-east-1", ["i-a", "i-b", "i-c"])
+    assert r == {"selected": "i-a", "protected": True, "terminated": ["i-b", "i-c"]}
+    modifies = [kw for tag, kw in ec2.calls if tag == "modify"]
+    assert {"InstanceId": "i-a", "DisableApiTermination": {"Value": True}} in modifies
+    assert {"InstanceId": "i-a", "DisableApiStop": {"Value": True}} in modifies
+    assert {"InstanceId": "i-b", "DisableApiTermination": {"Value": False}} in modifies
+    assert {"InstanceId": "i-b", "DisableApiStop": {"Value": False}} in modifies
+    assert {"InstanceId": "i-c", "DisableApiTermination": {"Value": False}} in modifies
+    assert [kw for tag, kw in ec2.calls if tag == "terminate"] == [{"InstanceIds": ["i-b", "i-c"]}]
+
+
+def test_select_terminate_failure_returns_409(tmp_path):
+    api, _ = _select_api(tmp_path, terminate_error=_err("OperationNotPermitted"))
+    with pytest.raises(ApiError) as ei:
+        api.select("xb-r", "i-a", False, True, "ap-east-1", ["i-a", "i-b"])
+    assert ei.value.status == 409 and "i-b" in ei.value.message
+
+
+def test_terminate_others_helper_unprotects_and_terminates(tmp_path):
+    api, ec2 = _select_api(tmp_path)
+    r = api.terminate_others("i-a", "ap-east-1", ["i-a", "i-b", "i-c"])
+    assert r == {"terminated": ["i-b", "i-c"]}
+    assert [kw for tag, kw in ec2.calls if tag == "terminate"] == [{"InstanceIds": ["i-b", "i-c"]}]

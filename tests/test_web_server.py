@@ -153,6 +153,20 @@ def test_terminate_others_endpoint(srv):
     assert st == 200 and r["terminated"] == winners[1:]
 
 
+def test_cleanup_rejects_invalid_run_id(srv):
+    base, _ = srv
+    for rid in ["a b", "a.b", "-x", "", "x/y"]:
+        st, b = _post(base + "/api/cleanup", {"run_id": rid})
+        assert st == 400 and b["error"]
+
+
+def test_unsupported_methods_return_405_json(srv):
+    base, _ = srv
+    for method in ("PUT", "DELETE"):
+        st, b = _req(base + "/api/runs", method=method, headers={"Content-Type": "application/json"}, data=b"{}")
+        assert st == 405 and json.loads(b)["error"] == "方法不支持"
+
+
 def test_post_guard_content_type_origin_and_host(srv):
     base, _ = srv
     url = base + "/api/plan"

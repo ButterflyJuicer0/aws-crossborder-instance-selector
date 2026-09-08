@@ -59,6 +59,8 @@ class RunManager:
         return self._records.get(run_id)
 
     def list(self) -> list:
+        with self._lock:  # 在锁内快照，避免遍历时 _records 被并发改写
+            records = dict(self._records)
         rows = {}
         for path in glob.glob(os.path.join(self.output_dir, "*", "status.json")):
             try:
@@ -66,10 +68,10 @@ class RunManager:
                     d = json.load(f)
             except (OSError, ValueError):
                 continue
-            if d.get("state") == "running" and d.get("run_id") not in self._records:
+            if d.get("state") == "running" and d.get("run_id") not in records:
                 d["state"] = "unknown"
             rows[d.get("run_id", os.path.basename(os.path.dirname(path)))] = d
-        for rid, rec in self._records.items():
+        for rid, rec in records.items():
             rows[rid] = rec.to_summary()
         return sorted(rows.values(), key=lambda d: d.get("started_at", ""), reverse=True)
 

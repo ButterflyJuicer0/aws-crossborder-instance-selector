@@ -101,6 +101,11 @@ class Handler(BaseHTTPRequestHandler):
 
     do_POST = do_GET
 
+    def _method_not_allowed(self):
+        self._json(405, {"error": "方法不支持"})
+
+    do_HEAD = do_PUT = do_DELETE = do_PATCH = _method_not_allowed
+
     def _guard(self, method):
         """本机安全护栏：非回环 Host 拒绝（--allow-remote 放开）；POST 强制 JSON 且拒绝跨站 Origin。"""
         if not self.ctx.get("allow_remote"):
@@ -137,7 +142,7 @@ class Handler(BaseHTTPRequestHandler):
         if method == "POST" and p == "/api/cleanup":
             body = self._body()
             rid = body.get("run_id") or ""
-            if ".." in rid or "/" in rid:  # 防止逃逸 output_dir
+            if not _RUN_ID_RE.match(rid):  # 与路由同一字符集，杜绝逃逸 output_dir
                 raise ApiError(400, "run id 非法")
             return self._json(200, api.cleanup(rid, self._region_for(rid)))
         m = _RUN_RE.match(p)

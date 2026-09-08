@@ -670,25 +670,37 @@ function statusCell(c){
 }
 function renderCandTable(){
   const box = $("#cand-table"); if (!box) return;
-  const cols = [["round","轮次",1],["public_ip","公网 IP",0],["prefix","prefix",0],["composite","综合分",1],["status","状态",0],
-               ["reverse_telecom","电信",1],["reverse_unicom","联通",1],["reverse_mobile","移动",1]];
+  const isp = c => c.isp_scores || {};
+  // 三网「分」取 isp_scores（评分），三网「RTT」取 reverse_*（原始时延 ms），二者含义不同
+  const cols = [
+    {k:"round", label:"轮次", sortable:true, num:true, get:c=>c.round, td:c=>`<td class="num">${fmt(c.round)}</td>`},
+    {k:"public_ip", label:"公网 IP", sortable:true, get:c=>c.public_ip, td:c=>`<td class="mono">${esc(c.public_ip)}</td>`},
+    {k:"prefix", label:"prefix", sortable:true, get:c=>c.prefix, td:c=>`<td class="mono">${esc(c.prefix)}</td>`},
+    {k:"composite", label:"综合分", sortable:true, num:true, get:c=>c.composite, td:c=>`<td class="num">${c.qualified ? fmt(c.composite) : "—"}</td>`},
+    {k:"status", label:"状态", sortable:false, get:()=>null, td:c=>`<td>${statusCell(c)}</td>`},
+    {k:"score_telecom", label:"电信分", sortable:true, num:true, get:c=>isp(c).telecom, td:c=>`<td class="num">${fmt(isp(c).telecom)}</td>`},
+    {k:"score_unicom", label:"联通分", sortable:true, num:true, get:c=>isp(c).unicom, td:c=>`<td class="num">${fmt(isp(c).unicom)}</td>`},
+    {k:"score_mobile", label:"移动分", sortable:true, num:true, get:c=>isp(c).mobile, td:c=>`<td class="num">${fmt(isp(c).mobile)}</td>`},
+    {k:"reverse_telecom", label:"电信 RTT", sortable:true, num:true, get:c=>c.reverse_telecom, td:c=>`<td class="num">${fmt(c.reverse_telecom)}</td>`},
+    {k:"reverse_unicom", label:"联通 RTT", sortable:true, num:true, get:c=>c.reverse_unicom, td:c=>`<td class="num">${fmt(c.reverse_unicom)}</td>`},
+    {k:"reverse_mobile", label:"移动 RTT (ms)", sortable:true, num:true, get:c=>c.reverse_mobile, td:c=>`<td class="num">${fmt(c.reverse_mobile)}</td>`},
+  ];
   const s = state.sort;
   const arrow = k => k === s.key ? (s.dir < 0 ? " ▼" : " ▲") : "";
-  const head = cols.map(([k,label,num]) => k === "status"
-    ? `<th>${esc(label)}</th>`
-    : `<th class="sortable${num?" num":""}" data-key="${k}">${esc(label)}<span class="arrow">${arrow(k)}</span></th>`).join("");
+  const head = cols.map(col => col.sortable
+    ? `<th class="sortable${col.num?" num":""}" data-key="${col.k}">${esc(col.label)}<span class="arrow">${arrow(col.k)}</span></th>`
+    : `<th>${esc(col.label)}</th>`).join("");
+  const sortCol = cols.find(col => col.k === s.key && col.sortable) || cols[0];
   const rows = (state.report.candidates || []).slice().sort((a,b) => {
-    const va = a[s.key], vb = b[s.key];
+    const va = sortCol.get(a), vb = sortCol.get(b);
     if (va == null && vb == null) return 0;
     if (va == null) return 1; if (vb == null) return -1;
     if (typeof va === "number" && typeof vb === "number") return (va - vb) * s.dir;
     return String(va).localeCompare(String(vb)) * s.dir;
   });
-  const body = rows.length ? rows.map(c => `<tr${c.kept?' class="winner"':''}>
-    <td class="num">${fmt(c.round)}</td><td class="mono">${esc(c.public_ip)}</td><td class="mono">${esc(c.prefix)}</td>
-    <td class="num">${c.qualified ? fmt(c.composite) : "—"}</td><td>${statusCell(c)}</td>
-    <td class="num">${fmt(c.reverse_telecom)}</td><td class="num">${fmt(c.reverse_unicom)}</td><td class="num">${fmt(c.reverse_mobile)}</td>
-    </tr>`).join("") : `<tr><td colspan="8" class="empty">无候选数据</td></tr>`;
+  const body = rows.length
+    ? rows.map(c => `<tr${c.kept?' class="winner"':''}>${cols.map(col => col.td(c)).join("")}</tr>`).join("")
+    : `<tr><td colspan="${cols.length}" class="empty">无候选数据</td></tr>`;
   box.innerHTML = `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
   box.querySelectorAll("th.sortable").forEach(th => th.addEventListener("click", () => {
     const k = th.dataset.key;

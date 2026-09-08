@@ -188,7 +188,7 @@ const money = v => (v == null ? "—" : "估算 $" + Number(v).toFixed(3));
 const state = {
   step: 1, reached: 1, demo: false, region: "ap-east-1",
   options: null, env: null, form: null, plan: null,
-  runId: null, runDetail: null, report: null, selection: null,
+  runId: null, runDetail: null, report: null, selection: null, runState: null,
   es: null, pollTimer: null, timerId: null, runStartMs: 0,
   rounds: [], logLines: [], maxRounds: 3, planTimer: null,
   sort: {key:"composite", dir:-1}, following: false,
@@ -457,6 +457,7 @@ async function mountConfirm(){
 function startRun(id, maxRounds){
   state.runId = id; state.maxRounds = maxRounds || state.maxRounds;
   state.rounds = []; state.logLines = []; state.runStartMs = Date.now(); state.following = true;
+  state.runState = "running";
   goStep(4);
   connectSSE(id);
 }
@@ -478,11 +479,16 @@ function mountRunning(){
     <div id="rounds-box"></div>
     <div id="fail-box"></div>
     <div class="log" id="log"></div>`;
-  $("#run-cancel").addEventListener("click", async () => {
-    if (!confirm("确认取消？当前轮结束后停止，已保留的 winner 会留在位。")) return;
-    try { await post(`/api/runs/${state.runId}/cancel`); setNote("已请求取消，当前轮结束后停止"); }
-    catch(e){ showError("取消失败：" + e.message); }
-  });
+  const cancelBtn = $("#run-cancel");
+  if (state.runState && state.runState !== "running"){
+    cancelBtn.hidden = true;  // run 已结束：不再提供「取消运行」
+  } else {
+    cancelBtn.addEventListener("click", async () => {
+      if (!confirm("确认取消？当前轮结束后停止，已保留的 winner 会留在位。")) return;
+      try { await post(`/api/runs/${state.runId}/cancel`); setNote("已请求取消，当前轮结束后停止"); }
+      catch(e){ showError("取消失败：" + e.message); }
+    });
+  }
   renderRounds(); renderLog(); updateProgress();
   clearInterval(state.timerId);
   state.timerId = setInterval(updateTimer, 1000); updateTimer();
@@ -511,8 +517,8 @@ function applyEvent(ev){
   else if (ev.type === "candidates"){ roundOf(ev.round).candidates = ev.items || []; }
   else if (ev.type === "vetoed"){ roundOf(ev.round).vetoed = ev.items || []; }
   else if (ev.type === "round_done"){ const r = roundOf(ev.round); r.kept = ev.kept || []; r.terminated = (ev.terminated || []).length; r.done = true; }
-  else if (ev.type === "finished"){ onFinished(ev); return; }
-  else if (ev.type === "failed"){ showFailed(ev.message, ev.leftover_instance_ids || []); return; }
+  else if (ev.type === "finished"){ state.runState = ev.stop_reason === "cancelled" ? "cancelled" : "finished"; onFinished(ev); return; }
+  else if (ev.type === "failed"){ state.runState = "failed"; showFailed(ev.message, ev.leftover_instance_ids || []); return; }
   if (state.step === 4){ renderRounds(); renderLog(); updateProgress(); }
 }
 function pushLog(m){ if (m == null) return; state.logLines.push(String(m)); if (state.logLines.length > 500) state.logLines = state.logLines.slice(-500); }
@@ -550,6 +556,7 @@ function startPolling(id){
     if (state.step === 4){ renderRounds(); renderLog(); updateProgress(); }
     if (d.state && d.state !== "running"){
       clearInterval(state.pollTimer); state.pollTimer = null;
+      state.runState = d.state;
       if (d.state === "failed") showFailed(d.error, d.leftover_instance_ids || []);
       else { state.runDetail = d; onFinished({stop_reason:d.stop_reason, winners:d.winners}); }
     }
@@ -779,6 +786,7 @@ async function openRun(id, knownState){
   try { d = await api(`/api/runs/${id}`); } catch(e){ showError("载入运行失败：" + e.message); return; }
   state.runId = id; state.runDetail = d; location.hash = "run=" + id;
   const st = d.state || knownState;
+  state.runState = st;
   if (st === "running"){
     state.maxRounds = (d.config && d.config.max_rounds) || state.maxRounds;
     state.rounds = []; state.logLines = []; state.runStartMs = Date.parse(d.started_at) || Date.now(); state.following = true;

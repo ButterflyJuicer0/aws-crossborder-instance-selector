@@ -164,6 +164,16 @@ def test_cancel_sets_flag_and_state(monkeypatch, tmp_path):
     assert "cancelled" in [e["type"] for e in rec.events]
 
 
+def test_cancel_rejected_after_run_finished(monkeypatch, tmp_path):
+    from crossborder_selector.config import load_config
+    FakeOrch.behaviour = "ok"
+    mgr = _patched(monkeypatch, tmp_path, load_config(None, {"region": "ap-east-1"}))
+    run_id = mgr.start({"region": "ap-east-1"})
+    rec = _wait(mgr, run_id)
+    assert rec.state == "finished"
+    assert mgr.cancel(run_id) is False  # 已结束的 run 不能取消
+
+
 def test_list_marks_stale_running_as_unknown(monkeypatch, tmp_path):
     from crossborder_selector.config import load_config
     out = tmp_path / "out" / "xb-old"

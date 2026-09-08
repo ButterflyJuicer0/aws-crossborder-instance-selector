@@ -131,9 +131,10 @@ class RunManager:
         return run_id
 
     def cancel(self, run_id):
+        rec = self._records.get(run_id)
         flag = self._flags.get(run_id)
-        if flag is None:
-            return False
+        if rec is None or flag is None or rec.state != "running":
+            return False  # 只有仍在运行的 run 才能取消；已结束的返回 False（server 转 404）
         flag.set()
         self.emit(run_id, {"type": "cancelled", "message": "已请求取消，当前轮结束后停止并保留在位 winner"})
         return True

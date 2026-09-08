@@ -1,5 +1,6 @@
 import json
 import threading
+import time
 import urllib.request
 import urllib.error
 
@@ -94,6 +95,32 @@ def test_run_lifecycle_and_sse(srv):
     assert st == 400
     st, cl = _post(base + "/api/cleanup", {"run_id": rid})
     assert st == 200 and cl["run_id"] == rid
+
+
+def test_cancel_finished_run_404_and_sse_replays_terminal(srv):
+    base, _ = srv
+    rid = _post(base + "/api/runs", {"region": "ap-east-1", "batch_size": 3, "max_rounds": 1, "keep_top_k": 1})[1]["run_id"]
+    detail = {}
+    for _ in range(300):
+        detail = _get(base + f"/api/runs/{rid}")[1]
+        if detail["state"] != "running":
+            break
+        time.sleep(0.02)
+    assert detail["state"] == "finished"
+    # 对已结束 run 取消 → 404（RunManager.cancel 返回 False）
+    st, b = _post(base + f"/api/runs/{rid}/cancel", {})
+    assert st == 404 and b["error"]
+    # 已结束 run 的 SSE：回放里带 finished 终态，立即可读到（不必等待新事件）
+    seen = []
+    with urllib.request.urlopen(base + f"/api/runs/{rid}/events", timeout=5) as resp:
+        for line in resp:
+            line = line.decode().strip()
+            if line.startswith("data:"):
+                ev = json.loads(line[5:])
+                seen.append(ev["type"])
+                if ev["type"] in ("finished", "failed"):
+                    break
+    assert seen and seen[-1] == "finished"
 
 
 def test_post_guard_content_type_origin_and_host(srv):

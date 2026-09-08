@@ -190,8 +190,8 @@ class Handler(BaseHTTPRequestHandler):
             replay = list(rec.events)
             for ev in replay:
                 self._sse_write(ev)
-            if replay and replay[-1]["type"] in ("finished", "failed"):
-                return
+            if rec.state in ("finished", "failed", "cancelled"):
+                return  # 已结束的 run：回放完立即收尾，不再挂起等待
             while True:
                 try:
                     ev = q.get(timeout=15)

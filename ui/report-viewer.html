@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>跨境优选实例报告</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#F5F7F9; --surface:#FFFFFF; --ink:#1B2430; --muted:#5F6B79; --line:#D9DFE6;
+  --accent:#0E7C6E; --accent-ink:#FFFFFF; --accent-soft:#DCEFEB;
+  --good:#1E8E4E; --warn:#B8791A; --bad:#B9433B; --good-soft:#DFF3E7; --warn-soft:#F8ECD5; --bad-soft:#F9E1DF;
+  --row:#F0F3F6;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0F151B; --surface:#161E26; --ink:#E6EBF0; --muted:#98A4B1; --line:#2A3540;
+    --accent:#3DB9A6; --accent-ink:#06211D; --accent-soft:#173630;
+    --good:#4CC37A; --warn:#E0A23E; --bad:#E06A62; --good-soft:#153524; --warn-soft:#3A2C12; --bad-soft:#3E1D1B;
+    --row:#1C262F;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0F151B; --surface:#161E26; --ink:#E6EBF0; --muted:#98A4B1; --line:#2A3540;
+  --accent:#3DB9A6; --accent-ink:#06211D; --accent-soft:#173630;
+  --good:#4CC37A; --warn:#E0A23E; --bad:#E06A62; --good-soft:#153524; --warn-soft:#3A2C12; --bad-soft:#3E1D1B;
+  --row:#1C262F;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 "IBM Plex Sans",system-ui,-apple-system,"PingFang SC","Noto Sans SC",sans-serif}
+code,.mono,td.mono,.num{font-family:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 24px;padding:18px 28px;border-bottom:1px solid var(--line);background:var(--surface)}
+header h1{margin:0;font-size:18px;font-weight:600;letter-spacing:.01em}
+header .sub{color:var(--muted);font-size:13px}
+.loader{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font:inherit;font-weight:500;cursor:pointer}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.btn:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+input[type=file]{position:absolute;width:1px;height:1px;opacity:0;overflow:hidden}
+.drop{border:1px dashed var(--line);border-radius:6px;padding:6px 10px;color:var(--muted);font-size:12px}
+.drop.over{border-color:var(--accent);color:var(--accent)}
+main{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:24px;padding:24px 28px;max-width:1400px;margin:0 auto}
+@media (max-width:980px){main{grid-template-columns:1fr}}
+section{margin-bottom:28px}
+h2{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.tile{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.tile .k{font-size:12px;color:var(--muted);letter-spacing:.04em}
+.tile .v{font-size:22px;font-weight:600;margin-top:4px;word-break:break-all}
+.tile .v.small{font-size:15px}
+.tile.accent{background:var(--accent-soft);border-color:transparent}
+.badge-note{display:inline-block;margin-left:8px;font-size:11px;padding:2px 7px;border-radius:999px;background:var(--warn-soft);color:var(--warn);font-weight:500;vertical-align:middle}
+.tablewrap{overflow-x:auto;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;min-width:640px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.04em;background:var(--row)}
+tbody tr:last-child td{border-bottom:none}
+td.num,th.num{text-align:right}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:500;line-height:1.5}
+.pill.good{background:var(--good-soft);color:var(--good)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.bad{background:var(--bad-soft);color:var(--bad)}
+.pill.neutral{background:var(--row);color:var(--muted)}
+.score{display:inline-flex;align-items:center;gap:8px}
+.score .bar{width:64px;height:6px;border-radius:3px;background:var(--row);overflow:hidden}
+.score .bar i{display:block;height:100%;background:var(--accent)}
+.score .bar i.low{background:var(--bad)}
+.score .bar i.mid{background:var(--warn)}
+tr.winner td{background:var(--accent-soft)}
+aside .panel{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:16px;margin-bottom:16px}
+aside h3{margin:0 0 12px;font-size:14px;font-weight:600}
+.field{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px;align-items:center;margin-bottom:8px}
+.field label{font-size:12px;color:var(--muted)}
+.field input,.field select{width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);font:inherit}
+.field.check{grid-template-columns:auto 1fr;justify-content:start}
+pre.cmd{margin:10px 0 0;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font-size:12px;white-space:pre-wrap;word-break:break-all}
+.notes{font-size:13px;color:var(--muted);margin:0;padding-left:18px}
+.notes li{margin-bottom:6px}
+.empty{color:var(--muted);padding:14px 16px}
+footer{padding:12px 28px 28px;color:var(--muted);font-size:12px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>跨境优选实例报告 <span id="sample-note" class="badge-note">示例数据</span></h1>
+    <div class="sub" id="meta">载入 out/&lt;run-id&gt;/report.json 或 candidates.csv 后显示本次 run 的结果</div>
+  </div>
+  <div class="loader">
+    <label class="btn primary" for="file">载入 report.json / candidates.csv</label>
+    <input id="file" type="file" accept=".json,.csv,application/json,text/csv">
+    <div class="drop" id="drop">或把文件拖到这里</div>
+  </div>
+</header>
+
+<main>
+  <div>
+    <section>
+      <h2>本次运行</h2>
+      <div class="tiles" id="tiles"></div>
+    </section>
+
+    <section>
+      <h2>Winner</h2>
+      <div class="tablewrap"><table id="winners"><thead><tr>
+        <th>instance</th><th>公网 IP</th><th>prefix</th><th class="num">综合分</th><th class="num">电信</th><th class="num">联通</th><th class="num">移动</th><th class="num">轮次</th>
+      </tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section>
+      <h2>每轮概览</h2>
+      <div class="tablewrap"><table id="rounds"><thead><tr>
+        <th class="num">轮次</th><th class="num">启动</th><th class="num">信誉否决</th><th class="num">拨测</th><th>保留</th><th class="num">终止</th><th>backend 错误</th>
+      </tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section>
+      <h2>全部候选</h2>
+      <div class="tablewrap"><table id="cands"><thead><tr>
+        <th class="num">轮次</th><th>instance</th><th>公网 IP</th><th>prefix</th><th>综合分</th><th>状态</th><th class="num">reverse 电信</th><th class="num">reverse 联通</th><th class="num">reverse 移动</th><th class="num">HK</th><th class="num">TW</th>
+      </tr></thead><tbody></tbody></table></div>
+    </section>
+
+    <section>
+      <h2>Prefix 统计（合格候选）</h2>
+      <div class="tablewrap"><table id="prefixes"><thead><tr>
+        <th>prefix</th><th class="num">样本</th><th class="num">均值</th><th class="num">最高</th>
+      </tr></thead><tbody></tbody></table></div>
+    </section>
+  </div>
+
+  <aside>
+    <div class="panel">
+      <h3>生成运行命令</h3>
+      <div class="field"><label for="f-region">Region</label><input id="f-region" value="ap-east-1"></div>
+      <div class="field"><label for="f-batch">每轮候选数</label><input id="f-batch" type="number" min="1" value="10"></div>
+      <div class="field"><label for="f-rounds">最大轮次</label><input id="f-rounds" type="number" min="1" value="3"></div>
+      <div class="field"><label for="f-keep">保留数</label><input id="f-keep" type="number" min="1" value="1"></div>
+      <div class="field check"><input id="f-protect" type="checkbox"><label for="f-protect">开启 --protect（winner 禁止 API stop/terminate）</label></div>
+      <div class="field check"><input id="f-itdog" type="checkbox"><label for="f-itdog">启用 itdog（非官方接口）</label></div>
+      <div class="field check"><input id="f-dry" type="checkbox" checked><label for="f-dry">先 dry-run</label></div>
+      <pre class="cmd" id="cmd"></pre>
+      <button class="btn" id="copy" type="button">复制命令</button>
+    </div>
+    <div class="panel">
+      <h3>读报告时注意</h3>
+      <ul class="notes">
+        <li>winner 不能 stop。stop/start 会更换公网 IPv4，reboot 不会。</li>
+        <li>winner 已移除 <code>crossborder-run-id</code> 标签，<code>cleanup --run-id</code> 不会终止它。</li>
+        <li><code>veto_reason</code> 为 reputation 且 detail 是 <code>error:...</code>：本机在用公共递归 DNS，Spamhaus 返回错误码。</li>
+        <li>全部 <code>reverse_unreachable</code>：更换 <code>backends.reverse.targets</code>。</li>
+        <li>分项列显示的是原始 rtt 中位数（ms），综合分才是加权结果。</li>
+      </ul>
+    </div>
+  </aside>
+</main>
+<footer>本页面只在浏览器本地解析文件，不上传任何数据。</footer>
+
+<script>
+const SAMPLE = {
+  run_id:"xb-20260907T080000Z-a1b2", region:"ap-east-1", started_at:"2026-09-07T08:00:00Z", finished_at:"2026-09-07T08:14:00Z",
+  stop_reason:"target_score_reached", rounds_completed:2,
+  winners:[{instance_id:"i-0f3c9a1d2e4b5c6d7", public_ip:"18.162.41.7", prefix:"18.162.0.0/16", composite:93.4, round:2,
+    isp_scores:{telecom:95.1, unicom:92.0, mobile:93.0}}],
+  rounds:[
+    {round:1, launched:4, vetoed:1, scored:3, kept:["43.198.12.9"], terminated:["i-01","i-02","i-03"], backend_errors:{}},
+    {round:2, launched:4, vetoed:0, scored:4, kept:["18.162.41.7"], terminated:["i-04","i-05","i-06","i-07"], backend_errors:{ripeatlas:"no key"}}
+  ],
+  candidates:[
+    {round:1, instance_id:"i-0a", public_ip:"43.198.12.9", prefix:"43.198.0.0/15", composite:81.2, qualified:true, veto_reason:"", reverse_telecom:71.0, reverse_unicom:88.5, reverse_mobile:102.3, globalping_HK:14.2, globalping_TW:36.8, kept:false},
+    {round:1, instance_id:"i-0b", public_ip:"18.163.77.20", prefix:"18.163.0.0/16", composite:64.7, qualified:true, veto_reason:"", reverse_telecom:96.0, reverse_unicom:140.2, reverse_mobile:210.5, globalping_HK:12.9, globalping_TW:40.1, kept:false},
+    {round:1, instance_id:"i-0c", public_ip:"16.162.5.44", prefix:"16.162.0.0/16", composite:0, qualified:false, veto_reason:"reputation", reverse_telecom:null, reverse_unicom:null, reverse_mobile:null, globalping_HK:null, globalping_TW:null, kept:false},
+    {round:1, instance_id:"i-0d", public_ip:"43.199.101.3", prefix:"43.198.0.0/15", composite:0, qualified:false, veto_reason:"reverse_unreachable", reverse_telecom:null, reverse_unicom:null, reverse_mobile:null, globalping_HK:15.5, globalping_TW:38.0, kept:false},
+    {round:2, instance_id:"i-0f3c9a1d2e4b5c6d7", public_ip:"18.162.41.7", prefix:"18.162.0.0/16", composite:93.4, qualified:true, veto_reason:"", reverse_telecom:52.3, reverse_unicom:61.0, reverse_mobile:58.7, globalping_HK:11.8, globalping_TW:33.2, kept:true},
+    {round:2, instance_id:"i-0e", public_ip:"18.162.200.9", prefix:"18.162.0.0/16", composite:77.5, qualified:true, veto_reason:"", reverse_telecom:70.2, reverse_unicom:95.1, reverse_mobile:120.0, globalping_HK:12.2, globalping_TW:35.0, kept:false},
+    {round:2, instance_id:"i-0g", public_ip:"43.198.66.1", prefix:"43.198.0.0/15", composite:58.9, qualified:true, veto_reason:"", reverse_telecom:130.0, reverse_unicom:150.4, reverse_mobile:170.2, globalping_HK:13.0, globalping_TW:37.5, kept:false},
+    {round:2, instance_id:"i-0h", public_ip:"16.163.9.9", prefix:"16.162.0.0/15", composite:0, qualified:false, veto_reason:"min_backends", reverse_telecom:null, reverse_unicom:null, reverse_mobile:null, globalping_HK:null, globalping_TW:null, kept:false}
+  ],
+  prefixes:{"18.162.0.0/16":{samples:2, mean_composite:85.45, best_composite:93.4}, "43.198.0.0/15":{samples:2, mean_composite:70.05, best_composite:81.2}, "18.163.0.0/16":{samples:1, mean_composite:64.7, best_composite:64.7}}
+};
+
+const $ = s => document.querySelector(s);
+const fmt = v => (v === null || v === undefined || v === "") ? "—" : (typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(1)) : String(v));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const STOP = {target_score_reached:"达到目标分", max_rounds:"轮次用尽", no_qualified:"无合格候选", launch_failed:"后续轮次启动失败，保留在位 winner"};
+const VETO = {reputation:"信誉否决", reverse_unreachable:"三网全部丢包", min_backends:"有效 backend 不足", no_public_ip:"无公网 IP"};
+
+function scoreCell(v){
+  if (v === null || v === undefined) return "—";
+  const cls = v >= 85 ? "" : (v >= 60 ? "mid" : "low");
+  return `<span class="score"><span class="num">${fmt(v)}</span><span class="bar"><i class="${cls}" style="width:${Math.max(0,Math.min(100,v))}%"></i></span></span>`;
+}
+function statusCell(c){
+  if (c.kept) return `<span class="pill good">winner</span>`;
+  if (c.qualified === true || c.qualified === "True" || c.qualified === "true") return `<span class="pill neutral">合格，未保留</span>`;
+  const r = c.veto_reason || "未合格";
+  return `<span class="pill bad" title="${esc(r)}">${esc(VETO[r] || r)}</span>`;
+}
+
+function render(d, isSample){
+  $("#sample-note").hidden = !isSample;
+  $("#meta").textContent = d.run_id ? `run-id ${d.run_id} · ${d.region || ""} · ${d.started_at || ""} → ${d.finished_at || ""}` : "仅载入 candidates.csv：没有 run 元数据与每轮概览";
+  const w = (d.winners && d.winners[0]) || null;
+  const tiles = [
+    ["Winner 公网 IP", w ? w.public_ip : "无", true, false],
+    ["综合分", w ? fmt(w.composite) : "—", false, false],
+    ["停止原因", d.stop_reason ? (STOP[d.stop_reason] || d.stop_reason) : "—", false, true],
+    ["完成轮次", d.rounds_completed ?? (d.rounds ? d.rounds.length : "—"), false, false],
+    ["候选总数", d.candidates ? d.candidates.length : 0, false, false],
+    ["Region", d.region || "—", false, true],
+  ];
+  $("#tiles").innerHTML = tiles.map(([k,v,acc,small]) => `<div class="tile${acc?" accent":""}"><div class="k">${esc(k)}</div><div class="v${small?" small":""}${typeof v==="string"&&/^\d/.test(v)?" mono":""}">${esc(v)}</div></div>`).join("");
+
+  const wb = $("#winners tbody");
+  wb.innerHTML = (d.winners && d.winners.length) ? d.winners.map(x => {
+    const s = x.isp_scores || {};
+    return `<tr class="winner"><td class="mono">${esc(x.instance_id)}</td><td class="mono">${esc(x.public_ip)}</td><td class="mono">${esc(x.prefix||"")}</td><td class="num">${fmt(x.composite)}</td><td class="num">${fmt(s.telecom)}</td><td class="num">${fmt(s.unicom)}</td><td class="num">${fmt(s.mobile)}</td><td class="num">${fmt(x.round)}</td></tr>`;
+  }).join("") : `<tr><td colspan="8" class="empty">本次没有合格候选</td></tr>`;
+
+  const rb = $("#rounds tbody");
+  rb.innerHTML = (d.rounds && d.rounds.length) ? d.rounds.map(r => `<tr><td class="num">${r.round}</td><td class="num">${fmt(r.launched)}</td><td class="num">${fmt(r.vetoed)}</td><td class="num">${fmt(r.scored)}</td><td class="mono">${esc((r.kept||[]).join(", ")||"—")}</td><td class="num">${(r.terminated||[]).length}</td><td>${esc(Object.keys(r.backend_errors||{}).join(", ")||"—")}</td></tr>`).join("")
+    : `<tr><td colspan="7" class="empty">无每轮数据</td></tr>`;
+
+  const cb = $("#cands tbody");
+  const cands = (d.candidates||[]).slice().sort((a,b) => (b.composite||0)-(a.composite||0) || a.round-b.round);
+  cb.innerHTML = cands.length ? cands.map(c => `<tr${c.kept?' class="winner"':''}><td class="num">${fmt(c.round)}</td><td class="mono">${esc(c.instance_id)}</td><td class="mono">${esc(c.public_ip)}</td><td class="mono">${esc(c.prefix||"")}</td><td>${c.qualified===true||c.qualified==="True"?scoreCell(c.composite):"—"}</td><td>${statusCell(c)}</td><td class="num">${fmt(c.reverse_telecom)}</td><td class="num">${fmt(c.reverse_unicom)}</td><td class="num">${fmt(c.reverse_mobile)}</td><td class="num">${fmt(c.globalping_HK)}</td><td class="num">${fmt(c.globalping_TW)}</td></tr>`).join("")
+    : `<tr><td colspan="11" class="empty">无候选数据</td></tr>`;
+
+  const pb = $("#prefixes tbody");
+  const pfx = Object.entries(d.prefixes||{}).sort((a,b) => b[1].best_composite - a[1].best_composite);
+  pb.innerHTML = pfx.length ? pfx.map(([p,v]) => `<tr><td class="mono">${esc(p)}</td><td class="num">${v.samples}</td><td class="num">${fmt(v.mean_composite)}</td><td class="num">${fmt(v.best_composite)}</td></tr>`).join("")
+    : `<tr><td colspan="4" class="empty">无 prefix 统计</td></tr>`;
+}
+
+function parseCsv(text){
+  const lines = text.replace(/\r/g,"").split("\n").filter(l => l.trim());
+  const head = lines[0].split(",");
+  const num = v => v === "" ? null : (isNaN(Number(v)) ? v : Number(v));
+  const rows = lines.slice(1).map(l => { const o = {}; l.split(",").forEach((v,i) => o[head[i]] = v); return o; });
+  const cands = rows.map(r => ({...r, round:num(r.round), composite:num(r.composite), qualified:r.qualified==="True", kept:r.kept==="True",
+    reverse_telecom:num(r.reverse_telecom), reverse_unicom:num(r.reverse_unicom), reverse_mobile:num(r.reverse_mobile), globalping_HK:num(r.globalping_HK), globalping_TW:num(r.globalping_TW)}));
+  const winners = cands.filter(c => c.kept).map(c => ({...c, isp_scores:{}}));
+  const prefixes = {};
+  cands.filter(c => c.qualified && c.prefix).forEach(c => { const p = prefixes[c.prefix] ||= {samples:0, sum:0, best_composite:0}; p.samples++; p.sum += c.composite; p.best_composite = Math.max(p.best_composite, c.composite); });
+  Object.values(prefixes).forEach(p => { p.mean_composite = p.sum / p.samples; delete p.sum; });
+  return {run_id: rows[0] && rows[0].run_id, winners, candidates:cands, prefixes, rounds:[]};
+}
+
+function load(file){
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const text = reader.result;
+      const data = file.name.toLowerCase().endsWith(".csv") ? parseCsv(text) : JSON.parse(text);
+      render(data, false);
+    } catch (e) {
+      $("#meta").textContent = `无法解析 ${file.name}：${e.message}。请载入工具生成的 report.json 或 candidates.csv。`;
+    }
+  };
+  reader.readAsText(file);
+}
+$("#file").addEventListener("change", e => e.target.files[0] && load(e.target.files[0]));
+const drop = $("#drop");
+["dragenter","dragover"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+document.addEventListener("drop", e => e.dataTransfer.files[0] && load(e.dataTransfer.files[0]));
+
+function buildCmd(){
+  const r = $("#f-region").value.trim() || "ap-east-1";
+  const parts = [`scripts/find_best_instance.sh ${r} ${$("#f-batch").value||10} ${$("#f-rounds").value||3} ${$("#f-keep").value||1}`];
+  if ($("#f-protect").checked) parts.push("--protect");
+  if ($("#f-itdog").checked) parts.push("--enable-backend itdog");
+  if ($("#f-dry").checked) parts.push("--dry-run");
+  $("#cmd").textContent = parts.join(" ");
+}
+document.querySelectorAll("aside input").forEach(i => i.addEventListener("input", buildCmd));
+$("#copy").addEventListener("click", async () => {
+  try { await navigator.clipboard.writeText($("#cmd").textContent); $("#copy").textContent = "已复制"; setTimeout(() => $("#copy").textContent = "复制命令", 1500); }
+  catch { $("#copy").textContent = "请手动复制"; }
+});
+buildCmd();
+render(SAMPLE, true);
+</script>
+</body>
+</html>

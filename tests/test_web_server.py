@@ -89,10 +89,17 @@ def test_run_lifecycle_and_sse(srv):
     st, body = _get(base + f"/api/runs/{rid}/report.csv", raw=True)
     assert st == 200 and body.startswith(b"run_id,")
     winners = [w["instance_id"] for w in detail["winners"]]
-    st, sel = _post(base + f"/api/runs/{rid}/select", {"instance_id": winners[0], "protect": True, "terminate_others": True})
-    assert st == 200 and sel["selected"] == winners[0] and sel["terminated"] == winners[1:]
+    # 坏实例（尚无 selection.json）→ 400
     st, bad = _post(base + f"/api/runs/{rid}/select", {"instance_id": "i-nope", "protect": False, "terminate_others": False})
     assert st == 400
+    # 首次选定 → 200
+    st, sel = _post(base + f"/api/runs/{rid}/select", {"instance_id": winners[0], "protect": True, "terminate_others": True})
+    assert st == 200 and sel["selected"] == winners[0] and sel["terminated"] == winners[1:]
+    # 重复选定（无 force）→ 409（I4）
+    st, dup = _post(base + f"/api/runs/{rid}/select", {"instance_id": winners[0], "protect": False, "terminate_others": False})
+    assert st == 409 and dup["error"]
+    # GET 详情带回 selection
+    assert _get(base + f"/api/runs/{rid}")[1]["selection"]["selected"] == winners[0]
     st, cl = _post(base + "/api/cleanup", {"run_id": rid})
     assert st == 200 and cl["run_id"] == rid
 

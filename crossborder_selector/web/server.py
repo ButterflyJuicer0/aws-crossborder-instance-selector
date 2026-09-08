@@ -69,6 +69,14 @@ class Handler(BaseHTTPRequestHandler):
     def ctx(self):
         return self.server.ctx
 
+    def _selection(self, run_id):
+        path = os.path.join(self.ctx["runs"].output_dir, run_id, "selection.json")
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+
     def _region_for(self, run_id):
         rec = self.ctx["runs"].get(run_id)
         if rec:
@@ -141,7 +149,9 @@ class Handler(BaseHTTPRequestHandler):
         if sub is None and method == "GET":
             rec = runs.get(rid)
             if rec:
-                return self._json(200, rec.to_detail())
+                d = rec.to_detail()
+                d["selection"] = self._selection(rid)
+                return self._json(200, d)
             path = os.path.join(runs.output_dir, rid, "status.json")
             if not os.path.exists(path):
                 raise ApiError(404, "run 不存在")
@@ -154,6 +164,7 @@ class Handler(BaseHTTPRequestHandler):
                     d["events"] = [json.loads(l) for l in f if l.strip()][-200:]
             if d.get("state") == "running":
                 d["state"] = "unknown"
+            d["selection"] = self._selection(rid)
             return self._json(200, d)
         if sub == "events" and method == "GET":
             return self._sse(rid)
@@ -163,9 +174,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"run_id": rid, "cancel_requested": True})
         if sub == "select" and method == "POST":
             body = self._body()
+            sel_path = os.path.join(runs.output_dir, rid, "selection.json")
+            if os.path.exists(sel_path) and not body.get("force"):
+                prev = (self._selection(rid) or {}).get("selected")
+                raise ApiError(409, f"本次 run 已选定 {prev}，如需重选请先手工处理")
             result = api.select(rid, body.get("instance_id", ""), bool(body.get("protect")), bool(body.get("terminate_others")),
                                 self._region_for(rid), runs.winner_ids(rid))
-            with open(os.path.join(runs.output_dir, rid, "selection.json"), "w") as f:
+            with open(sel_path, "w") as f:
                 json.dump(result, f, ensure_ascii=False, indent=2)
             return self._json(200, result)
         if sub and sub.startswith("report.") and method == "GET":

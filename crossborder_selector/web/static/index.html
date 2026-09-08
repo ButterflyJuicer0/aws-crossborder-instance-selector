@@ -610,6 +610,8 @@ function mountResult(){
   const c = $("#content"); const d = state.report;
   if (!d){ c.innerHTML = `<div class="empty">尚无报告数据。</div>`; return; }
   const winners = d.winners || [];
+  const selected = (state.runDetail && state.runDetail.selection) || null;
+  if (selected) state.selection = selected;  // 已选定：让第 ⑥ 步可直接展示
   const tiles = [
     ["停止原因", STOP[d.stop_reason] || d.stop_reason || "—"],
     ["完成轮次", d.rounds_completed],
@@ -627,7 +629,9 @@ function mountResult(){
         <div class="isp">${isp}</div>
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span>综合分 <b>${fmt(w.composite)}</b></span>
-          <button class="btn primary" data-sel="${esc(w.instance_id)}" type="button">选定这台</button>
+          ${selected
+            ? (selected.selected === w.instance_id ? `<span class="pill good">已选定</span>` : `<span class="pill neutral">未选定</span>`)
+            : `<button class="btn primary" data-sel="${esc(w.instance_id)}" type="button">选定这台</button>`}
         </div></div>`;
     }).join("")}</div>`;
   } else {
@@ -635,15 +639,22 @@ function mountResult(){
       <p class="step-desc">常见原因：候选 IP 信誉被全部否决，或到大陆三网全部不可达。可回到配置调整机型、增大每轮数量或轮次后重试。</p>
       <div class="actions"><button class="btn primary" id="res-reconfig" type="button">回到配置重新运行</button></div></div>`;
   }
+  const selectedBanner = selected
+    ? `<div class="card" style="border-color:var(--accent)"><h3>已选定 ${esc(selected.selected)}</h3>
+        <p class="step-desc">本次 run 已完成选定。如需重选请先手工处理，或开始新一轮筛选。</p>
+        <div class="actions"><button class="btn primary" id="res-done" type="button">进入完成页</button></div></div>`
+    : "";
   c.innerHTML = `
     <h2>第 5 步 · 结果与选机</h2>
     <p class="step-desc">从保留的候选中选定一台作为出口机，其余可一并终止。选定为不可逆操作，会二次确认。</p>
     <div class="tiles" style="margin-bottom:18px">${tiles.map(([k,v]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v small">${esc(String(v == null ? "—" : v))}</div></div>`).join("")}</div>
+    ${selectedBanner}
     <section style="margin-bottom:22px"><h2>保留候选</h2>${winnerHtml}</section>
     <section style="margin-bottom:22px"><h2>全部候选</h2><div class="tablewrap" id="cand-table"></div></section>
     <section><h2>Prefix 统计（合格候选）</h2><div class="tablewrap" id="pfx-table"></div></section>`;
   c.querySelectorAll("[data-sel]").forEach(b => b.addEventListener("click", () => openSelectModal(b.dataset.sel)));
   const rc = $("#res-reconfig"); if (rc) rc.addEventListener("click", () => goStep(2));
+  const rd = $("#res-done"); if (rd) rd.addEventListener("click", () => goStep(6));
   renderCandTable(); renderPfxTable();
 }
 function scoreBar(v){
@@ -756,9 +767,9 @@ function mountDone(){
     </div></div>
     <div class="actions">
       <button class="btn" id="done-hist" type="button">查看历史运行</button>
-      <button class="btn primary" id="done-again" type="button">再选一次</button>
+      <button class="btn primary" id="done-again" type="button">开始新一轮筛选</button>
     </div>`;
-  $("#done-again").addEventListener("click", () => enterResult(state.runId));
+  $("#done-again").addEventListener("click", () => goStep(2));
   $("#done-hist").addEventListener("click", refreshHistory);
 }
 

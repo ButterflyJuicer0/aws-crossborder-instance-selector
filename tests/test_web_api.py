@@ -69,6 +69,15 @@ def test_env_sts_failure_is_reported_not_raised(tmp_path):
     assert e["ok"] is False and e["caller"] is None and any("凭证" in p for p in e["problems"])
 
 
+def test_env_factory_failure_is_reported_not_raised(tmp_path):
+    from botocore.exceptions import ProfileNotFound
+    def bad_factory(cfg):
+        raise ProfileNotFound(profile="x")
+    e = Api(factory=bad_factory, cwd=str(tmp_path)).env("ap-east-1")
+    assert e["ok"] is False and e["caller"] is None
+    assert any("aws configure" in p for p in e["problems"])
+
+
 def test_options_filters_catalog_by_offerings(tmp_path):
     api = Api(factory=_factory(ec2={"offerings": ("t3.nano", "t4g.nano")}), cwd=str(tmp_path))
     o = api.options("ap-east-1")

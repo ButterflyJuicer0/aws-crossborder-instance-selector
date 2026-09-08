@@ -65,10 +65,15 @@ class Api:
     # ---------- ① 环境检查 ----------
     def env(self, region: str) -> dict:
         cfg = self.load({"region": region})
-        clients = self.factory(cfg)
         out = {"region": region, "caller": None, "default_vpc": {"present": False, "subnets": 0}, "vcpu_quota": None,
                "running_instances": None, "winners": [], "config_yaml_present": self._config_file() is not None,
                "problems": []}
+        try:  # 构造 client 本身可能失败（ProfileNotFound / NoRegionError 皆为 BotoCoreError 子类）
+            clients = self.factory(cfg)
+        except (ClientError, BotoCoreError) as e:
+            out["problems"].append(f"AWS 凭证或配置不可用：{e}。请先执行 aws configure。")
+            out["ok"] = False
+            return out
         try:
             ident = clients["sts"].get_caller_identity()
             out["caller"] = {"account": ident["Account"], "arn": ident["Arn"]}

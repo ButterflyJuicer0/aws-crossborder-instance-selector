@@ -70,7 +70,7 @@ class DemoOrchestrator:
                 if rno == 1 and i == 0:  # 第 1 轮固定一个信誉否决
                     rep = ReputationResult(c.public_ip, [SourceResult("dnsbl", True, "zen.spamhaus.org")], 50.0)
                     vetoed.append(CandidateScore(c, rep, [], {}, {}, 0.0, False, "reputation"))
-                elif rno == 1 and i == 1:  # 第 1 轮固定一个三网不可达否决
+                elif rno == 1 and i == 1 and self.cfg.batch_size - 2 >= self.cfg.keep_top_k:  # 第 1 轮固定一个三网不可达否决；批量过小时跳过，保证仍能填满 keep_top_k
                     pr = ProbeResult("reverse", [IspProbe(isp, 4, 0, None, method="ping") for isp in ISPS])
                     vetoed.append(CandidateScore(c, None, [pr], {}, {}, 0.0, False, "reverse_unreachable"))
                 else:

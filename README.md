@@ -4,7 +4,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![AWS](https://img.shields.io/badge/AWS-EC2%20%C2%B7%20SSM%20%C2%B7%20IAM-FF9900?logo=amazonaws&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-101%20passed-2EA043)
+![Tests](https://img.shields.io/badge/tests-128%20passed-2EA043)
 ![No LLM](https://img.shields.io/badge/runtime-no%20AI%20model-555555)
 
 > AWS 没有"跨境优选 IP"服务。EC2 自动分配的公网 IPv4 无法转成 EIP，EIP 分配器会反复返回同一地址，且每 Region 仅 5 个配额。本工具改为筛选实例本身：多轮启动临时 EC2，拨测其公网 IP，保留胜出实例、终止其余。胜出实例持续运行期间 IP 保持不变（reboot 保留 IP，stop/start 会更换）。
@@ -12,6 +12,7 @@
 ## 目录
 
 - [快速开始](#快速开始)
+- [Web 向导](#web-向导)
 - [工作原理](#工作原理)
 - [拨测数据源](#拨测数据源)
 - [打分规则](#打分规则)
@@ -31,14 +32,17 @@
 ```bash
 git clone <this-repo> && cd aws-crossborder-instance-selector
 python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-pytest -q                                                   # 101 passed，不访问网络、不需凭证
+pytest -q                                                   # 128 passed，不访问网络、不需凭证
 
 scripts/find_best_instance.sh ap-east-1 2 1 1 --dry-run     # 只打印计划，不创建资源
 scripts/find_best_instance.sh ap-east-1 2 1 1               # 冒烟：2 台、1 轮，约 5～8 分钟
 scripts/find_best_instance.sh ap-east-1 20 3 1 --protect    # 正式：每轮 20 台、最多 3 轮、保留 1 台
+
+scripts/start_web.sh                                        # 本地 Web 向导，默认 http://127.0.0.1:8765
+scripts/start_web.sh --demo                                 # Web 向导演示模式，不接触 AWS
 ```
 
-位置参数依次为 Region、每轮候选数、最大轮次、保留数；其后可追加任意 CLI 参数，例如 `--protect`、`--enable-backend itdog`。
+位置参数依次为 Region、每轮候选数、最大轮次、保留数；其后可追加任意 CLI 参数，例如 `--protect`、`--enable-backend itdog`。不想记 CLI 参数时改用本地 [Web 向导](#web-向导)。
 
 命令输出的第一行是 `run-id: xb-...`。清理和重生成报告都依赖它：
 
@@ -46,6 +50,31 @@ scripts/find_best_instance.sh ap-east-1 20 3 1 --protect    # 正式：每轮 20
 python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
 python -m crossborder_selector.cli report  --run-id <run-id> --output-dir ./out
 ```
+
+## Web 向导
+
+不想记 CLI 参数时，用本地 Web 向导按步骤完成同一套选机流程。
+
+```bash
+scripts/start_web.sh                              # 默认 http://127.0.0.1:8765，自动打开浏览器
+scripts/start_web.sh --demo                       # 演示模式：模拟数据走完整流程，不接触 AWS
+scripts/start_web.sh --port 8792 --no-browser     # 换端口、不自动打开浏览器
+```
+
+也可直接运行 `python -m crossborder_selector.web [--host --port --output-dir --config --demo --no-browser]`。
+
+向导分六步：
+
+1. 环境检查：读取本机凭证身份、默认 VPC、vCPU 配额与该 Region 已有 winner；有阻断问题时禁止进入下一步。
+2. 配置参数：选择机型、每轮候选数、轮次、保留数、探测 backend 与 protect，右侧实时给出成本与时长估算。
+3. 确认计划：展示 dry-run 文本与估算，确认后才启动实例并产生费用。
+4. 运行中：进度条、实时日志、每轮候选/否决/保留经 Server-Sent Events 推送，可随时取消。
+5. 结果与选机：并排展示保留候选的综合分与三网分，从中选定一台出口机，其余可一并终止。
+6. 完成：显示选定实例、标签与接入建议，提供 report.json/md/csv 下载。
+
+演示模式（`--demo`）不调用任何 AWS API，用模拟数据按真实事件顺序走完六步，并写出真实格式的报告文件到 `out/`，适合无凭证环境向客户演示。
+
+服务只监听 127.0.0.1 回环地址，使用本机 AWS 凭证，不做登录认证，仅供本机单人使用。
 
 ## 工作原理
 
@@ -142,7 +171,7 @@ flowchart TD
 ## 测试
 
 ```bash
-. .venv/bin/activate && pytest -q      # 101 passed
+. .venv/bin/activate && pytest -q      # 128 passed
 ```
 
 单元测试不访问网络：AWS 用 moto，SSM 与四个探测 backend 用注入的假 transport。dry-run 验证、真实冒烟、清理与中断恢复的完整步骤见 [TESTING.md](TESTING.md)。
@@ -165,8 +194,10 @@ crossborder_selector/
 ├── report.py         JSON / Markdown / CSV 与 prefix 历史
 ├── aws/              ec2.py · infra.py · ssm.py · ipranges.py
 ├── probes/           base.py · reverse.py · globalping.py · ripeatlas.py · itdog.py
-└── reputation/       dnsbl.py · badlist.py · abuseipdb.py
+├── reputation/       dnsbl.py · badlist.py · abuseipdb.py
+└── web/              __main__.py · server.py · api.py · runs.py · demo.py · pricing.py · static/index.html
 scripts/find_best_instance.sh   一条命令入口
+scripts/start_web.sh            本地 Web 向导入口
 ui/report-viewer.html           报告查看页
 .claude/skills/crossborder-select/SKILL.md
 tests/                          pytest，moto + 假 transport
@@ -184,6 +215,6 @@ docs/superpowers/               设计 spec 与实施计划
 
 | 文档 | 内容 |
 |---|---|
-| [MANUAL.md](MANUAL.md) | 按操作顺序的运维手册：安装、配置、dry-run、冒烟、正式运行、可选 backend、清理、故障排查、交付生产 |
-| [TESTING.md](TESTING.md) | 单元测试、dry-run、真实冒烟、脚本语法检查、清理与中断恢复验证 |
+| [MANUAL.md](MANUAL.md) | 按操作顺序的运维手册：安装、配置、dry-run、冒烟、正式运行、可选 backend、清理、故障排查、交付生产、用 Web 向导运行 |
+| [TESTING.md](TESTING.md) | 单元测试、dry-run、真实冒烟、脚本语法检查、清理与中断恢复验证、Web 向导冒烟 |
 | [docs/superpowers/specs/](docs/superpowers/specs/) | 设计 spec（架构、配置、打分、错误处理） |

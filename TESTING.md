@@ -8,7 +8,7 @@
 . .venv/bin/activate && pytest -q
 ```
 
-预期结尾输出 `101 passed`。测试不访问网络：EC2/IAM/SSM 用 moto 模拟；SSM 与四个探测 backend（reverse、globalping、ripeatlas、itdog）用注入的假 transport（假 SSM client、假 HTTP、假 WebSocket、假 SSM runner）驱动，配合假 clock 让超时路径可测。
+预期结尾输出 `128 passed`。测试不访问网络：EC2/IAM/SSM 用 moto 模拟；SSM 与四个探测 backend（reverse、globalping、ripeatlas、itdog）用注入的假 transport（假 SSM client、假 HTTP、假 WebSocket、假 SSM runner）驱动，配合假 clock 让超时路径可测。
 
 `tests/` 各文件覆盖范围：
 
@@ -29,6 +29,11 @@
 - `test_scoring.py`：延迟因子边界、子分结合丢包与延迟、多目标取平均、backend 三网加权否则等权、reputation/reverse 不可达/min_backends 三种 veto、composite 在有效 backend 上归一化、排序键。
 - `test_ssm.py`：`wait_online` 返回在线集合、超时返回部分、`run_script` 轮询至成功、本地超时路径。
 - `test_wrapper_script.py`：包装脚本 dry-run 路径、无参数时打印用法。
+- `test_web_api.py`：`/api/env`、`/api/options`（offerings 过滤）、`/api/plan` 成本公式、错误 JSON 格式，全部注入假 boto3 factory。
+- `test_web_runs.py`：假 Orchestrator 驱动 `RunManager`，验证事件顺序、`status.json` 状态迁移、cancel 标志、events.jsonl 落盘、`failed` 携带遗留实例。
+- `test_web_server.py`：真实启动 `ThreadingHTTPServer` 于随机端口，`urllib` 请求 `/`、`/api/runs`、404、SSE 首包。
+- `test_web_pricing.py`：机型候选表与估算小时价。
+- `test_web_demo.py`：演示模式的固定环境结果与模拟 run 事件序列。
 
 ## 2. Dry-run 验证（不创建资源、不需凭证）
 
@@ -138,3 +143,100 @@ print(res["1.1.1.1"])   # ProbeResult(backend='globalping', probes=[IspProbe(isp
 ```
 
 返回 `{ip: ProbeResult}`；`error` 非空表示该候选拨测失败。匿名调用受速率限制约 250 tests/h，反复运行易触顶（返回 429），必要时在 cfg 的 `api_token` 填入 token 提升到约 500 tests/h。
+
+## 8. Web 向导冒烟
+
+### 8.1 后端单元测试（不需凭证）
+
+```bash
+. .venv/bin/activate && pytest tests/test_web_*.py -q
+```
+
+预期 `25 passed`：`test_web_api.py`（8）、`test_web_demo.py`（4）、`test_web_pricing.py`（3）、`test_web_runs.py`（5）、`test_web_server.py`（5）。全部用注入的假 boto3 factory 与假 Orchestrator，不访问网络。
+
+### 8.2 演示模式手工冒烟（不需凭证）
+
+演示模式不接触 AWS，用模拟数据走完整六步，适合无凭证环境验证界面与事件流（对应设计文档 §10）。
+
+```bash
+scripts/start_web.sh --demo --no-browser --port 8792
+```
+
+启动后打印：
+
+```
+Web 向导：http://127.0.0.1:8792（演示模式，不接触 AWS）
+```
+
+浏览器打开该地址：顶部显示演示模式横幅；依次走完环境检查 → 配置参数 → 确认计划 → 运行中 → 结果与选机 → 完成。「运行中」页应看到进度条推进、实时日志、每轮候选/否决/保留；「完成」页可下载 report.json/md/csv。
+
+另开一个终端用 curl 验证后端接口：
+
+```bash
+curl -s http://127.0.0.1:8792/api/meta
+# {"demo": true, "version": "1.0"}
+
+curl -s "http://127.0.0.1:8792/api/env?region=ap-east-1"
+# {"region": "ap-east-1", "caller": {"account": "123456789012", ...}, "default_vpc": {"present": true, "subnets": 2}, "vcpu_quota": 64.0, "running_instances": 3, "winners": [], "config_yaml_present": false, "problems": [], "ok": true}
+
+curl -s "http://127.0.0.1:8792/api/options?region=ap-east-1"
+# {"regions": [...7 项...], "instance_types": [...9 项，各带 vcpu/memory_gib/arch/hourly_usd...], "backends": [reverse, globalping, ripeatlas, itdog], "defaults": {...}}
+```
+
+发起一次 run 并用 SSE 观察事件流：
+
+```bash
+RID=$(curl -s -X POST http://127.0.0.1:8792/api/runs \
+  -H 'Content-Type: application/json' \
+  -d '{"region":"ap-east-1","batch_size":2,"max_rounds":1,"keep_top_k":1}' \
+  | python -c 'import sys,json;print(json.load(sys.stdin)["run_id"])')
+curl -N "http://127.0.0.1:8792/api/runs/$RID/events"
+```
+
+预期按顺序收到（run-id 每次不同，形如 `xb-20260908T081749Z-375c`）：
+
+```
+data: {"type": "round_started", "round": 1, "batch_size": 2, ...}
+data: {"type": "log", "message": "[demo round 1] launching 2 candidates", ...}
+data: {"type": "candidates", "round": 1, "items": [{"instance_id": "i-demo100", "public_ip": "18.162.253.159", "prefix": "18.162.0.0/16"}, ...]}
+data: {"type": "vetoed", "round": 1, "items": [{"instance_id": "i-demo100", "public_ip": "18.162.253.159", "reason": "reputation"}]}
+data: {"type": "round_done", "round": 1, "kept": [{"instance_id": "i-demo101", "public_ip": "43.198.168.205", "composite": 87.5}], "terminated": ["i-demo100"], "backend_errors": {}}
+data: {"type": "finished", "stop_reason": "max_rounds", "winners": [{"instance_id": "i-demo101", "composite": 87.5, ...}], "report_paths": {...}}
+```
+
+收到 `finished` 后流自动关闭；演示报告写在 `out/<run-id>/`。用完停止服务：
+
+```bash
+pkill -f crossborder_selector.web
+```
+
+### 8.3 真实模式冒烟（需要凭证）
+
+前置检查与第 3 节相同（凭证、默认 VPC、vCPU 配额）。启动向导后走真实运行：
+
+```bash
+scripts/start_web.sh --port 8792
+```
+
+在界面从「配置参数」按 2 台 1 轮发起，或直接走默认规模。「运行中」页的 SSE 事件与命令行 select 一致，约 5～8 分钟完成；「结果与选机」页选定一台后其余保留候选按勾选终止。用第 5 节的 describe-instances 命令确认只剩选定实例带 `crossborder-winner=true`。
+
+### 8.4 SSE 单独验证
+
+对一个运行中的 run 直接观察事件流（真实或演示均可）：
+
+```bash
+curl -N http://127.0.0.1:8765/api/runs/<run-id>/events
+```
+
+每行为 `data: {json}`，事件类型依次为 `round_started`、`candidates`、`vetoed`、`round_done`，run 结束时收到 `finished`（异常时 `failed`），随后连接关闭。
+
+### 8.5 前端渲染检查（可选）
+
+前端不做自动化测试。可用 headless Chrome 截图确认页面能正常渲染：
+
+```bash
+scripts/start_web.sh --demo --no-browser &
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --screenshot=/tmp/wizard.png http://127.0.0.1:8765/
+```
+
+生成 `/tmp/wizard.png`，打开确认顶部有演示模式横幅、左侧六步导航、主区为环境检查卡片。

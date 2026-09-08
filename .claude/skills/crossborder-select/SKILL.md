@@ -21,6 +21,7 @@ description: 在 AWS 上批量启动候选 EC2、从中国大陆视角拨测其�
 | 查看计划 | `scripts/find_best_instance.sh <region> <batch> <rounds> <keep> --dry-run` |
 | 小规模冒烟 | `scripts/find_best_instance.sh <region> 2 1 1` |
 | 正式运行 | `scripts/find_best_instance.sh <region> 20 3 1 --protect` |
+| 图形界面 / 客户演示 | `scripts/start_web.sh`（无凭证演示加 `--demo`） |
 | 启用可选 backend | 追加 `--enable-backend itdog`（ripeatlas 需先在 `config.yaml` 填 `api_key`） |
 | 清理某次 run | `.venv/bin/python -m crossborder_selector.cli cleanup --region <region> --run-id <run-id>` |
 | 重生成报告 | `.venv/bin/python -m crossborder_selector.cli report --run-id <run-id> --output-dir ./out` |
@@ -36,6 +37,7 @@ description: 在 AWS 上批量启动候选 EC2、从中国大陆视角拨测其�
 4. 命令结束后读取 `out/<run-id>/report.md`，向用户汇报：winner 的 instance id、公网 IP、prefix、综合分与三网分项；停止原因；每轮淘汰数量；`backend_errors`。
 5. 提醒用户：winner 不能 stop（stop/start 会更换公网 IP，reboot 不会）；winner 已移除 `crossborder-run-id` 标签，`cleanup` 不会影响它；关机行为已设为 stop。
 6. 若用户中断（Ctrl-C，退出码 130），输出里会列出遗留实例 id；立即运行 `cleanup --run-id <run-id>` 并用 `aws ec2 describe-instances --filters Name=tag:crossborder-run-id,Values=<run-id>` 确认为空。
+7. 用户要图形界面或要给客户演示时，改用本地 Web 向导：运行 `scripts/start_web.sh`，把打印的地址（默认 http://127.0.0.1:8765）给用户；无凭证环境用 `scripts/start_web.sh --demo` 走模拟流程。向导覆盖与 CLI 相同的六步（环境检查、配置参数、确认计划、运行中、结果与选机、完成），只监听本机、使用本机凭证、不做认证。
 
 ## 结果解读
 

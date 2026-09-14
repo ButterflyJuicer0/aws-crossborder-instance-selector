@@ -42,6 +42,11 @@ def parse_args(argv=None):
     p.add_argument("--region", default=None, help="实例所在区域；反向探测必需")
     p.add_argument("--profile", default=None, help="AWS profile；不填走 boto3 默认凭证链")
     p.add_argument("--enable", action="append", default=[], choices=["itdog"], help="额外启用的探测源")
+    p.add_argument("--agent-instance", action="append", default=[], metavar="ID=ISP",
+                   help="中国区受 SSM 管理的 agent 实例，做 China → AWS 探测；可重复，如 i-0abc=telecom")
+    p.add_argument("--agent-region", default=None, help="agent 实例所在区域；默认取配置 backends.agent.region")
+    p.add_argument("--agent-profile", default=None, help="agent 账户的 AWS profile；默认取配置 backends.agent.profile")
+    p.add_argument("--tcp-port", action="append", type=int, default=[], help="agent 的 TCP 探测端口，可重复；默认取配置")
     p.add_argument("--no-globalping", action="store_true", help="跳过 Globalping")
     p.add_argument("--no-reputation", action="store_true", help="跳过信誉检查")
     p.add_argument("--json", action="store_true", help="以 JSON 输出全部结果")
@@ -57,8 +62,36 @@ def build_cfg(args):
     return load_config(path, overrides)
 
 
+def build_agent_backend(cfg, args):
+    """--agent-instance 给出的实例覆盖配置；未给且配置未启用时不建 agent。"""
+    acfg = dict(cfg.backends["agent"])
+    if args.agent_instance:
+        pairs = {}
+        for item in args.agent_instance:
+            iid, _, isp = item.partition("=")
+            if not iid:
+                print("error: --agent-instance 需要 ID 或 ID=ISP", file=sys.stderr)
+                raise SystemExit(2)
+            pairs[iid] = isp or acfg.get("region") or "agent"
+        acfg["instances"] = pairs
+    elif not acfg.get("enabled") or not acfg.get("instances"):
+        return None
+    if args.agent_region:
+        acfg["region"] = args.agent_region
+    if args.agent_profile is not None:
+        acfg["profile"] = args.agent_profile
+    if args.tcp_port:
+        acfg["tcp_ports"] = args.tcp_port
+    from crossborder_selector.cli import agent_ssm_runner
+    from crossborder_selector.probes.agent import AgentBackend
+    return AgentBackend(agent_ssm_runner(acfg), acfg)
+
+
 def build_probe_backends(cfg, args, cand):
     backends, reverse_enabled = [], False
+    agent = build_agent_backend(cfg, args)
+    if agent is not None:
+        backends.append(agent)
     if not args.no_globalping:
         gp = dict(cfg.backends["globalping"])
         if args.locations:
@@ -98,9 +131,10 @@ def as_dict(rep, results, errors, score, cand):
             "status": rep.status, "score": rep.score,
             "sources": [{"source": r.source, "status": r.status, "listed": r.listed,
                          "detail": r.detail, "error": r.error} for r in rep.results]},
-        "probes": [{"backend": pr.backend, "ok": pr.ok, "error": pr.error,
+        "probes": [{"backend": pr.backend, "ok": pr.ok, "error": pr.error, "warning": getattr(pr, "warning", ""),
                     "samples": [{"isp": p.isp, "method": p.method, "target": p.target, "sent": p.sent,
-                                 "received": p.received, "loss": round(p.loss, 3), "avg_ms": p.median_rtt_ms}
+                                 "received": p.received, "loss": round(p.loss, 3), "avg_ms": p.median_rtt_ms,
+                                 "p95_ms": p.p95_rtt_ms, "jitter_ms": p.jitter_ms}
                                 for p in pr.probes]} for pr in results],
         "backend_errors": errors,
         "ssm_online": cand.ssm_online if cand.instance_id != "external" else None,
@@ -122,11 +156,15 @@ def print_human(d):
             print(f"  {s['source']:10} {s['status']:8}{extra}")
     for pr in d["probes"]:
         print(f"\n[{pr['backend']}] ok={pr['ok']}" + (f" error={pr['error']}" if pr["error"] else ""))
+        if pr.get("warning"):
+            print(f"  warning: {pr['warning']}")
         for p in pr["samples"]:
             avg = "-" if p["avg_ms"] is None else f"{p['avg_ms']:.1f}"
+            p95 = "-" if p.get("p95_ms") is None else f"{p['p95_ms']:.1f}"
+            jit = "-" if p.get("jitter_ms") is None else f"{p['jitter_ms']:.1f}"
             tgt = f" {p['target']}" if p["target"] and p["target"] != d["ip"] else ""
             print(f"  {p['isp']:8} {p['method']:4}{tgt:24} sent={p['sent']} recv={p['received']} "
-                  f"loss={p['loss']:.0%} avg_ms={avg}")
+                  f"loss={p['loss']:.0%} avg_ms={avg} p95_ms={p95} jitter_ms={jit}")
     if d["backend_errors"]:
         print("\n[探测源错误]")
         for k, v in d["backend_errors"].items():
@@ -160,7 +198,9 @@ def main(argv=None):
     score = None
     if results:
         min_backends = min(cfg.min_backends, len(backends))
-        score = score_candidate(cand, rep, results, cfg.weights, min_backends, reverse_enabled)
+        agent_enabled = any(b.name == "agent" for b in backends)
+        score = score_candidate(cand, rep, results, cfg.weights, min_backends, reverse_enabled,
+                                agent_enabled=agent_enabled)
 
     out = as_dict(rep, results, errors, score, cand)
     if args.json:

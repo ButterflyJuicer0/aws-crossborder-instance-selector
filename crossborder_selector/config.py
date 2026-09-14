@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import yaml
 
-KNOWN_BACKENDS = ("reverse", "globalping", "ripeatlas", "itdog")
+KNOWN_BACKENDS = ("reverse", "globalping", "ripeatlas", "itdog", "agent")
 ISPS = ("telecom", "unicom", "mobile")
 
 
@@ -49,8 +49,14 @@ DEFAULTS = {
                 "mobile": ["221.130.33.52:53", "www.10086.cn"],
             },
         },
-        "globalping": {"enabled": True, "locations": ["HK", "TW"], "limit_per_location": 2,
-                       "packets": 4, "timeout_s": 60, "api_token": ""},
+        # CN 探针数量少且多为数据中心出口，仍是零成本获得 China → AWS 方向样本的途径；
+        # 每地区 3 个探针以上，避免同城探针位置差异（实测同城可差近一倍）被平均掩盖
+        "globalping": {"enabled": True, "locations": ["HK", "TW", "CN"], "limit_per_location": 3,
+                       "packets": 8, "timeout_s": 90, "api_token": ""},
+        # agent：客户中国区（或任意大陆）受 SSM 管理的服务器主动探测候选 IP，方向 China → AWS，主信号
+        "agent": {"enabled": False, "profile": "", "region": "cn-north-1",
+                  "instances": {},            # {instance_id: isp 标签}，如 {"i-0abc...": "telecom"}
+                  "ping_count": 10, "tcp_ports": [443], "tcp_count": 5, "timeout_s": 180},
         "ripeatlas": {"enabled": False, "api_key": "", "probe_count": 10, "packets": 4,
                       "timeout_s": 120},
         "itdog": {
@@ -63,10 +69,15 @@ DEFAULTS = {
         },
     },
     "weights": {
-        "backends": {"reverse": 0.5, "globalping": 0.2, "ripeatlas": 0.15, "itdog": 0.15},
+        # reverse 只是 AWS → China 回程健康度，跨境路由非对称，不能主导 China → AWS 的选择
+        "backends": {"agent": 0.4, "globalping": 0.3, "reverse": 0.1, "ripeatlas": 0.1, "itdog": 0.1},
         "isps": {"telecom": 0.34, "unicom": 0.33, "mobile": 0.33},
         "lat_good_ms": 60,
         "lat_bad_ms": 300,
+        "jitter_bad_ms": 50,      # 抖动达到该值扣满 jitter_penalty
+        "jitter_penalty": 0.3,    # 抖动最多扣掉的比例
+        "prefix_history": 0.3,    # 最终分 = (1-w)×本次 + w×prefix 历史均分
+        "prefix_min_samples": 3,  # prefix 历史样本少于该数时不融合
     },
     "reputation": {
         "dnsbl_zones": ["zen.spamhaus.org", "b.barracudacentral.org"],
@@ -218,6 +229,29 @@ def _validate(d: dict) -> None:
     number(w["lat_bad_ms"], "weights.lat_bad_ms", 0)
     if not w["lat_good_ms"] < w["lat_bad_ms"]:
         raise ValueError("lat_good_ms must be < lat_bad_ms")
+    number(w["jitter_bad_ms"], "weights.jitter_bad_ms", 0)
+    if w["jitter_bad_ms"] <= 0:
+        raise ValueError("weights.jitter_bad_ms must be > 0")
+    number(w["jitter_penalty"], "weights.jitter_penalty", 0, 1)
+    number(w["prefix_history"], "weights.prefix_history", 0, 1)
+    if w["prefix_history"] >= 1:
+        raise ValueError("weights.prefix_history must be < 1 so the current measurement always counts")
+    number(w["prefix_min_samples"], "weights.prefix_min_samples", 1, integer=True)
+    agent = d["backends"]["agent"]
+    if not isinstance(agent["instances"], dict) or not all(
+            isinstance(k, str) and isinstance(v, str) and k and v for k, v in agent["instances"].items()):
+        raise ValueError("backends.agent.instances must map instance_id -> isp label (both strings)")
+    if agent["enabled"] and not agent["instances"]:
+        raise ValueError("backends.agent.enabled requires at least one entry in backends.agent.instances")
+    if not isinstance(agent["region"], str) or not re.fullmatch(r"[a-z]{2}(?:-[a-z0-9]+)+-\d+", agent["region"]):
+        raise ValueError("backends.agent.region must be an AWS region code, for example cn-north-1")
+    if not isinstance(agent["profile"], str):
+        raise ValueError("backends.agent.profile must be a string (empty = default credential chain)")
+    if not isinstance(agent["tcp_ports"], list) or not agent["tcp_ports"]:
+        raise ValueError("backends.agent.tcp_ports must be a non-empty list")
+    for port in agent["tcp_ports"]:
+        number(port, "backends.agent.tcp_ports", 1, 65535, integer=True)
+    number(agent["tcp_count"], "backends.agent.tcp_count", 1, integer=True)
     if not set(d["backends"]) <= set(KNOWN_BACKENDS):
         raise ValueError(f"backends keys must be subset of {KNOWN_BACKENDS}")
     for name, config in d["backends"].items():

@@ -20,7 +20,8 @@ class DemoOrchestrator:
     """与 Orchestrator 同构造签名（多一个 step_delay）；run() 产出完整 RunResult，可喂给 write_reports。"""
 
     def __init__(self, cfg, ec2, ssm, backends, reputation_sources, prefix_lookup, infra, run_id,
-                 clock=utc_now_iso, log=print, on_event=None, should_stop=None, step_delay=0.4):
+                 clock=utc_now_iso, log=print, on_event=None, should_stop=None, step_delay=0.4,
+                 prefix_history=None):
         self.cfg, self.run_id = cfg, run_id
         self.templates = getattr(infra, "launch_templates", ())
         self.now, self.log = clock, log

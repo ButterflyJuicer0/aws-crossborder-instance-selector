@@ -8,10 +8,22 @@ from statistics import mean
 from crossborder_selector.config import ISPS
 from crossborder_selector.diagnostics import redact, secret_values
 
-BACKEND_ISP_COLUMNS = [("reverse", i) for i in ISPS] + [("globalping", "HK"), ("globalping", "TW")] + \
+BACKEND_ISP_COLUMNS = [("agent", i) for i in ISPS] + [("reverse", i) for i in ISPS] + \
+                      [("globalping", "HK"), ("globalping", "TW"), ("globalping", "CN")] + \
                       [("ripeatlas", i) for i in ISPS] + [("itdog", i) for i in ISPS]
 CSV_COLUMNS = ["run_id", "round", "instance_id", "instance_type", "public_ip", "prefix", "reputation_score", "veto_reason",
-               "composite", "qualified"] + [f"{b}_{i}" for b, i in BACKEND_ISP_COLUMNS] + ["kept", "terminated", "reputation_status"]
+               "composite", "instant_composite", "prefix_history_score", "qualified"] + \
+              [f"{b}_{i}" for b, i in BACKEND_ISP_COLUMNS] + ["kept", "terminated", "reputation_status"]
+
+
+def load_history(path: str) -> dict:
+    """读取 prefix 历史统计；文件不存在或损坏时返回空 dict，不影响本次运行。"""
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
 
 
 def _raw_rtt(score, backend, isp):
@@ -27,7 +39,8 @@ def _row(run, s, kept_ids, terminated_ids):
     c = s.candidate
     row = {"run_id": run.run_id, "round": c.round, "instance_id": c.instance_id, "public_ip": c.public_ip,
            "prefix": c.prefix, "reputation_score": s.reputation.score if s.reputation else None,
-           "veto_reason": s.veto_reason, "composite": s.composite, "qualified": s.qualified}
+           "veto_reason": s.veto_reason, "composite": s.composite, "qualified": s.qualified,
+           "instant_composite": s.instant_composite, "prefix_history_score": s.prefix_history_score}
     for b, i in BACKEND_ISP_COLUMNS:
         row[f"{b}_{i}"] = _raw_rtt(s, b, i)
     row["kept"] = c.instance_id in kept_ids
@@ -38,9 +51,10 @@ def _row(run, s, kept_ids, terminated_ids):
     row["reputation_results"] = [
         {**asdict(result), "status": result.status} for result in s.reputation.results] if s.reputation else []
     row["probe_results"] = [
-        {"backend": pr.backend, "ok": pr.ok, "error": pr.error,
+        {"backend": pr.backend, "ok": pr.ok, "error": pr.error, "warning": getattr(pr, "warning", ""),
          "probes": [{"isp": p.isp, "sent": p.sent, "received": p.received, "loss": p.loss,
-                     "mean_rtt_ms": p.median_rtt_ms, "target": p.target, "method": p.method}
+                     "mean_rtt_ms": p.median_rtt_ms, "p95_rtt_ms": p.p95_rtt_ms, "jitter_ms": p.jitter_ms,
+                     "target": p.target, "method": p.method}
                     for p in pr.probes]} for pr in s.probe_results]
     return row
 

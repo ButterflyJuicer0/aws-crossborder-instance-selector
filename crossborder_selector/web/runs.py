@@ -12,7 +12,7 @@ from crossborder_selector.aws.ipranges import load_ip_ranges, PrefixLookup
 from crossborder_selector.aws.ssm import SsmRunner
 from crossborder_selector.cli import build_backends, new_run_id
 from crossborder_selector.orchestrator import Orchestrator, utc_now_iso
-from crossborder_selector.report import write_reports
+from crossborder_selector.report import write_reports, load_history
 from crossborder_selector.reputation.abuseipdb import build_sources
 from crossborder_selector.diagnostics import redact, secret_values
 
@@ -157,7 +157,8 @@ class RunManager:
                 PrefixLookup(prefixes, cfg.region), infra, run_id,
                 log=lambda m: self.emit(run_id, {"type": "log", "message": str(m)}),
                 on_event=lambda e: self.emit(run_id, e),
-                should_stop=self._flags[run_id].is_set)
+                should_stop=self._flags[run_id].is_set,
+                prefix_history=load_history(self.history_file or cfg.history_file))
             result = orch.run()
             # winner 先于报告落库：即便随后 write_reports 失败，winner 已可见且带进 failed 事件
             rec.stop_reason = result.stop_reason

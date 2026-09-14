@@ -14,11 +14,12 @@ from crossborder_selector.aws.ipranges import load_ip_ranges, PrefixLookup
 from crossborder_selector.aws.ssm import SsmRunner
 from crossborder_selector.config import load_config, launch_groups
 from crossborder_selector.orchestrator import Orchestrator
+from crossborder_selector.probes.agent import AgentBackend
 from crossborder_selector.probes.globalping import GlobalpingBackend
 from crossborder_selector.probes.itdog import ItdogBackend
 from crossborder_selector.probes.reverse import ReverseBackend
 from crossborder_selector.probes.ripeatlas import RipeAtlasBackend
-from crossborder_selector.report import write_reports, regenerate
+from crossborder_selector.report import write_reports, regenerate, load_history
 from crossborder_selector.reputation.abuseipdb import build_sources
 
 
@@ -30,8 +31,16 @@ def default_factory(cfg) -> dict:
     return {name: boto3.client(name, region_name=cfg.region) for name in ("ec2", "iam", "ssm")}
 
 
-def build_backends(cfg, ssm_runner) -> list:
+def agent_ssm_runner(agent_cfg):
+    """agent 实例通常在另一个账户/分区（如中国区），用独立 profile 与区域建 SSM 客户端。"""
+    session = boto3.Session(profile_name=agent_cfg["profile"]) if agent_cfg.get("profile") else boto3.Session()
+    return SsmRunner(session.client("ssm", region_name=agent_cfg["region"]))
+
+
+def build_backends(cfg, ssm_runner, agent_ssm=None) -> list:
     b, out = cfg.backends, []
+    if b["agent"]["enabled"]:
+        out.append(AgentBackend(agent_ssm or agent_ssm_runner(b["agent"]), b["agent"]))
     if b["reverse"]["enabled"]:
         out.append(ReverseBackend(ssm_runner, b["reverse"]))
     if b["globalping"]["enabled"]:
@@ -101,7 +110,8 @@ def _do_select(args, factory) -> int:
     prefixes = load_ip_ranges(cache_path=os.path.join(cfg.output_dir, "ip-ranges.json"))
     ec2mgr = Ec2Manager(clients["ec2"])
     orch = Orchestrator(cfg, ec2mgr, ssm_runner, build_backends(cfg, ssm_runner),
-                        build_sources(cfg.reputation), PrefixLookup(prefixes, cfg.region), infra, run_id)
+                        build_sources(cfg.reputation), PrefixLookup(prefixes, cfg.region), infra, run_id,
+                        prefix_history=load_history(cfg.history_file))
     try:
         result = orch.run()
     except KeyboardInterrupt:

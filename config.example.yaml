@@ -61,12 +61,14 @@ backends:
       - www.10086.cn
   globalping:
     enabled: true
+    # CN 探针是零成本的 China → AWS 方向样本；同城探针位置差异可达一倍，每地区至少 3 个
     locations:
     - HK
     - TW
-    limit_per_location: 2
-    packets: 4
-    timeout_s: 60
+    - CN
+    limit_per_location: 3
+    packets: 8
+    timeout_s: 90
     # 可选 API token；留空则匿名。额度以服务当前规则和账户状态为准。
     api_token: ''
   ripeatlas:
@@ -75,6 +77,16 @@ backends:
     probe_count: 10
     packets: 4
     timeout_s: 120
+  # 客户中国区受 SSM 管理的服务器主动探测候选 IP（China → AWS），默认权重最高；不需要客户开放入站
+  agent:
+    enabled: false
+    profile: ''            # 中国区凭证 profile；留空走默认凭证链
+    region: cn-north-1     # agent 实例所在区域
+    instances: {}          # instance_id -> isp 标签，例如 {i-0abc1234567890def: telecom}
+    ping_count: 10
+    tcp_ports: [443]       # 建议填业务实际端口
+    tcp_count: 5
+    timeout_s: 180
   itdog:
     enabled: false  # 非官方接口，默认关闭
     timeout_s: 30
@@ -88,19 +100,24 @@ backends:
       '1249': mobile
       '1169': telecom
       '1290': mobile
-# 综合评分权重（探测源权重、三网权重、延迟好/坏阈值）
+# 综合评分权重（探测源权重、三网权重、延迟/抖动阈值、prefix 历史融合）
 weights:
   backends:
-    reverse: 0.5
-    globalping: 0.2
-    ripeatlas: 0.15
-    itdog: 0.15
+    agent: 0.4        # China → AWS 主信号
+    globalping: 0.3
+    reverse: 0.1      # AWS → China 回程健康度，路由非对称，不应主导
+    ripeatlas: 0.1
+    itdog: 0.1
   isps:
     telecom: 0.34
     unicom: 0.33
     mobile: 0.33
-  lat_good_ms: 60
+  lat_good_ms: 60     # 延迟因子作用于 P95（无逐包数据时为平均值）
   lat_bad_ms: 300
+  jitter_bad_ms: 50   # 抖动达到该值扣满 jitter_penalty
+  jitter_penalty: 0.3
+  prefix_history: 0.3       # 最终分 = (1-w)×本次 + w×同网段历史均分
+  prefix_min_samples: 3     # 历史样本不足时不融合
 # IP 信誉检查数据源配置
 reputation:
   dnsbl_zones:

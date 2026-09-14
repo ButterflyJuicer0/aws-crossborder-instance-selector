@@ -88,7 +88,7 @@ def test_options_uses_aws_offerings(tmp_path):
     assert [i["type"] for i in o["instance_types"]] == ["t3.nano", "t4g.nano"]
     assert o["instance_types_source"] == "aws"
     names = {b["name"] for b in o["backends"]}
-    assert names == {"reverse", "globalping", "ripeatlas", "itdog"}
+    assert names == {"reverse", "globalping", "ripeatlas", "itdog", "agent"}
     rip = next(b for b in o["backends"] if b["name"] == "ripeatlas")
     assert rip["needs_key"] is True and rip["key_present"] is False
     assert o["defaults"]["batch_size"] == 10 and "abuseipdb_api_key" not in str(o["defaults"])

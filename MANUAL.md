@@ -76,6 +76,34 @@ scripts/start_web.sh --port 8792 --no-browser
 
 `--host <address> --allow-remote` 可启用远程访问。服务没有身份认证，应限制网络来源；同源 POST 的协议、主机和端口必须一致。`--allow-remote` 不等于关闭跨站检查。
 
+## 启用客户侧 agent 探测（China → AWS）
+
+agent 是默认权重最高的探测源，但需要客户在中国区提供一台受 SSM 管理的服务器。步骤：
+
+1. 确认服务器 SSM 在线（用中国区凭证）：
+
+```bash
+aws ssm describe-instance-information --profile cn --region cn-north-1 \
+  --query 'InstanceInformationList[].{Id:InstanceId,Ping:PingStatus}' --output table
+```
+
+2. 在 `config.yaml` 填入实例与其运营商标签：
+
+```yaml
+backends:
+  agent:
+    enabled: true
+    profile: cn
+    region: cn-north-1
+    instances:
+      i-0abc1234567890def: telecom
+    tcp_ports: [443]
+```
+
+3. 先 dry-run 核对计划中出现 `agent`，再真实运行。报告中每个候选会多出 `agent_telecom` 等列，`probe_results` 里 `backend: agent` 的样本含 `p95_rtt_ms` 与 `jitter_ms`。
+
+agent 只做出向 ping 和 TCP 连接，不需要客户开放入站端口。单台 agent 失败在报告 `warning` 中体现；全部失败时候选按 `agent_unavailable` 否决。没有客户服务器时可用中国区账户临时启动一台最小实例充当 agent，用完终止。
+
 ## 启用可选探测源
 
 RIPE Atlas 需要 API key 和 credits，并显式启用：
@@ -119,6 +147,7 @@ Web 已保留但最终未选定的实例，应使用“终止其余保留候选�
 
 | 现象 | 检查内容 |
 |---|---|
+| `agent_unavailable` | 中国区 agent 实例是否 SSM Online、`profile`/`region` 是否指向正确账户与区域、报告 `probe_results` 中 agent 条目的 error |
 | `reverse_unavailable` | SSM 注册状态、实例角色、出网路径和报告中的具体错误 |
 | `reverse_incomplete` | 反向探测是否返回全部配置运营商的样本 |
 | `reverse_unreachable` / `unreachable` | 配置目标是否响应，外部探测的安全组、网络 ACL 和路由是否允许；不要直接认定整个运营商网络不可达 |

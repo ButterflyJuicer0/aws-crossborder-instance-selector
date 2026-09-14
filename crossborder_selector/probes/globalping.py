@@ -5,6 +5,7 @@ import requests
 
 from crossborder_selector.models import IspProbe, ProbeResult
 from crossborder_selector.probes.base import ProbeBackend
+from crossborder_selector.stats import rtt_summary
 
 API_BASE = "https://api.globalping.io/v1"
 
@@ -46,10 +47,14 @@ class GlobalpingBackend(ProbeBackend):
             if result.get("status") != "finished":
                 continue  # 离线/失败探针没有 stats，跳过而非记为 100% 丢包
             st = result.get("stats") or {}
+            # timings 为逐包 [{rtt, ttl}]，用于 P95 与抖动；旧结果没有该字段时两者为 None
+            rtts = [float(t["rtt"]) for t in (result.get("timings") or []) if t.get("rtt") is not None]
+            summary = rtt_summary(rtts)
             probes.append(IspProbe(isp=r["probe"]["country"], sent=int(st.get("total") or 0),
                                    received=int(st.get("rcv") or 0),
                                    median_rtt_ms=(None if st.get("avg") is None else float(st["avg"])),
-                                   target=ip, method="ping"))
+                                   target=ip, method="ping",
+                                   p95_rtt_ms=summary["p95"], jitter_ms=summary["jitter"]))
         return ProbeResult(self.name, probes)
 
     def probe(self, candidates) -> dict:

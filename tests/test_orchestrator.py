@@ -244,3 +244,39 @@ def test_should_stop_cancels_before_next_round_and_marks_winner():
     assert rr.winners[0].candidate.public_ip == "10.0.0.2"
     assert ec2.winners == [("i-2", rr.winners[0].composite, 1)]
     assert set(ec2.live) == {"i-2"}
+
+
+def test_orchestrator_passes_prefix_history_and_agent_flag_to_scoring():
+    ec2 = FakeEc2(["10.0.0.1", "10.0.0.2"])
+    cfg = _cfg(max_rounds=1, weights={"prefix_history": 0.5, "prefix_min_samples": 1})
+    hist = {"10.0.0.0/8": {"samples": 5, "mean_composite": 40.0, "best_composite": 60.0}}
+    orch = Orchestrator(cfg, ec2, FakeSsm(), [ScriptedBackend({"10.0.0.1": 50.0, "10.0.0.2": 50.0})], [],
+                        lambda ip: "10.0.0.0/8", INFRA, "xb-h", log=lambda *a: None, prefix_history=hist)
+    rr = orch.run()
+    w = rr.winners[0]
+    assert w.instant_composite == 100.0 and w.prefix_history_score == 40.0 and w.composite == 70.0
+    assert orch.agent_enabled is False
+
+
+class ScriptedAgent(ScriptedBackend):
+    name = "agent"
+    def probe(self, candidates):
+        out = super().probe(candidates)
+        for pr in out.values():
+            pr.backend = "agent"
+        return out
+
+
+def test_orchestrator_vetoes_when_agent_enabled_but_agent_returns_nothing():
+    ec2 = FakeEc2(["10.0.0.1"])
+    cfg = _cfg(max_rounds=1, batch_size=1, weights={"backends": {"reverse": 0.1, "agent": 0.9}})
+
+    class SilentAgent(ProbeBackend):
+        name = "agent"
+        def probe(self, candidates): return {}
+
+    orch = Orchestrator(cfg, ec2, FakeSsm(), [ScriptedBackend({"10.0.0.1": 50.0}), SilentAgent()], [],
+                        lambda ip: "", INFRA, "xb-a", log=lambda *a: None)
+    rr = orch.run()
+    assert orch.agent_enabled is True
+    assert rr.winners == [] and rr.rounds[0].scored[0].veto_reason == "agent_unavailable"

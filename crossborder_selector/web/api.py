@@ -16,8 +16,9 @@ from crossborder_selector.web import pricing
 from crossborder_selector.diagnostics import redact
 
 _BACKEND_DOC = {
-    "reverse": {"needs_key": False, "desc": "候选机经 SSM 向大陆三网目标 ping + tcping"},
-    "globalping": {"needs_key": False, "desc": "HK/TW 公共探针探测候选 IP"},
+    "agent": {"needs_key": False, "desc": "客户中国区受 SSM 管理的服务器主动探测候选 IP（China → AWS，主信号）；需在 config.yaml 配置 backends.agent.instances"},
+    "reverse": {"needs_key": False, "desc": "候选机经 SSM 向大陆三网目标 ping + tcping（AWS → China 回程健康度）"},
+    "globalping": {"needs_key": False, "desc": "HK/TW/CN 公共探针探测候选 IP，含逐包 P95 与抖动"},
     "ripeatlas": {"needs_key": True, "desc": "RIPE Atlas 大陆在线探针，需要 api_key"},
     "itdog": {"needs_key": False, "desc": "itdog.cn 中配置的运营商节点，非官方接口"},
 }

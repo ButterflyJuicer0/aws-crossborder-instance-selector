@@ -53,7 +53,7 @@ def test_unknown_enable_backend_rejected():
 
 
 def test_known_backends_constant():
-    assert KNOWN_BACKENDS == ("reverse", "globalping", "ripeatlas", "itdog")
+    assert KNOWN_BACKENDS == ("reverse", "globalping", "ripeatlas", "itdog", "agent")
 
 
 def test_final_retention_can_exceed_five_but_not_total_candidates():
@@ -62,3 +62,38 @@ def test_final_retention_can_exceed_five_but_not_total_candidates():
         load_config(overrides={"batch_size": 50, "max_rounds": 2, "keep_top_k": 51})
     with pytest.raises(ValueError, match="最终保留数量"):
         load_config(overrides={"batch_size": 2, "max_rounds": 2, "keep_top_k": 5})
+
+
+# ---- 跨境测量方向改进后的默认值与 agent 探测源 ----
+
+def test_defaults_probe_from_cn_and_deemphasize_reverse():
+    cfg = load_config(None)
+    assert cfg.backends["globalping"]["locations"] == ["HK", "TW", "CN"]
+    assert cfg.backends["globalping"]["limit_per_location"] >= 3
+    assert cfg.weights["backends"]["reverse"] <= 0.1
+    assert cfg.weights["backends"]["agent"] >= cfg.weights["backends"]["globalping"] > cfg.weights["backends"]["reverse"]
+    assert cfg.weights["jitter_bad_ms"] > 0 and 0 <= cfg.weights["jitter_penalty"] <= 1
+    assert 0 <= cfg.weights["prefix_history"] < 1 and cfg.weights["prefix_min_samples"] >= 1
+    assert "agent" in KNOWN_BACKENDS
+    assert cfg.backends["agent"]["enabled"] is False
+    assert cfg.backends["agent"]["instances"] == {} and cfg.backends["agent"]["tcp_ports"] == [443]
+
+
+@pytest.mark.parametrize("bad", [
+    {"backends": {"agent": {"enabled": True}}},  # 启用但没有实例
+    {"backends": {"agent": {"instances": ["i-1"]}}},  # 不是 id -> isp 映射
+    {"backends": {"agent": {"instances": {"i-1": 5}}}},
+    {"backends": {"agent": {"region": "beijing"}}},
+    {"backends": {"agent": {"tcp_ports": [70000]}}},
+    {"weights": {"prefix_history": 1.5}},
+    {"weights": {"jitter_penalty": -0.1}},
+])
+def test_agent_and_weight_validation(bad):
+    with pytest.raises(ValueError):
+        load_config(None, bad)
+
+
+def test_agent_enabled_with_instances_is_valid():
+    cfg = load_config(None, {"backends": {"agent": {"enabled": True, "region": "cn-north-1", "profile": "cn",
+                                                   "instances": {"i-0123456789abcdef0": "telecom"}}}})
+    assert cfg.backends["agent"]["enabled"] is True

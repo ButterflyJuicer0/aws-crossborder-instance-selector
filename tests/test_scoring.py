@@ -68,3 +68,51 @@ def test_rank_order():
     b = score_candidate(Candidate("b", "2.2.2.2"), CLEAN, [rev(180, 180, 180)], W, 1, True)
     v = score_candidate(Candidate("v", "3.3.3.3"), DIRTY, [rev()], W, 1, True)
     assert [s.candidate.instance_id for s in rank([b, v, a])] == ["a", "b", "v"]
+
+
+# ---- P95 / 抖动 / prefix 历史 / agent 否决 ----
+
+def test_probe_score_prefers_p95_over_mean_when_available():
+    # 均值 70 很好看，但 P95 500 ms 已超过 lat_bad，得分应为 0
+    p = IspProbe("telecom", 10, 10, 70.0, p95_rtt_ms=500.0)
+    assert probe_score(p, 60, 300) == 0.0
+    # 均值 95 / P95 110：按 P95 线性衰减 (300-110)/(300-60)
+    q = IspProbe("telecom", 10, 10, 95.0, p95_rtt_ms=110.0)
+    assert probe_score(q, 60, 300) == pytest.approx(100 * (300 - 110) / 240)
+
+
+def test_probe_score_applies_jitter_penalty():
+    steady = IspProbe("telecom", 10, 10, 50.0, p95_rtt_ms=55.0, jitter_ms=2.0)
+    shaky = IspProbe("telecom", 10, 10, 50.0, p95_rtt_ms=55.0, jitter_ms=80.0)
+    assert probe_score(steady, 60, 300, jitter_bad_ms=50, jitter_penalty=0.3) == pytest.approx(100 * (1 - 0.3 * 2 / 50))
+    # 抖动超过 jitter_bad_ms 时扣满 penalty，不再继续扣
+    assert probe_score(shaky, 60, 300, jitter_bad_ms=50, jitter_penalty=0.3) == pytest.approx(70.0)
+    # 没有抖动数据不扣分
+    assert probe_score(IspProbe("telecom", 10, 10, 50.0), 60, 300, jitter_bad_ms=50, jitter_penalty=0.3) == 100.0
+
+
+def test_score_candidate_blends_prefix_history():
+    w = {**W, "prefix_history": 0.3, "prefix_min_samples": 3}
+    c = Candidate("i-1", "1.1.1.1", prefix="18.162.0.0/16")
+    hist = {"18.162.0.0/16": {"samples": 10, "mean_composite": 40.0, "best_composite": 90.0}}
+    s = score_candidate(c, CLEAN, [rev()], w, 1, True, prefix_history=hist)
+    assert s.instant_composite == 100.0
+    assert s.prefix_history_score == 40.0
+    assert s.composite == pytest.approx(0.7 * 100.0 + 0.3 * 40.0)
+
+
+def test_prefix_history_ignored_below_min_samples_or_unknown_prefix():
+    w = {**W, "prefix_history": 0.3, "prefix_min_samples": 3}
+    thin = {"18.162.0.0/16": {"samples": 2, "mean_composite": 40.0, "best_composite": 90.0}}
+    s = score_candidate(Candidate("i-1", "1.1.1.1", prefix="18.162.0.0/16"), CLEAN, [rev()], w, 1, True, prefix_history=thin)
+    assert s.composite == 100.0 and s.prefix_history_score is None
+    s2 = score_candidate(Candidate("i-2", "2.2.2.2", prefix="54.0.0.0/8"), CLEAN, [rev()], w, 1, True, prefix_history=thin)
+    assert s2.composite == 100.0 and s2.prefix_history_score is None
+
+
+def test_veto_agent_unavailable_when_agent_enabled_but_missing():
+    s = score_candidate(C, CLEAN, [rev()], W, 1, True, agent_enabled=True)
+    assert not s.qualified and s.veto_reason == "agent_unavailable"
+    agent = ProbeResult("agent", [IspProbe("telecom", 10, 10, 80.0, p95_rtt_ms=90.0, method="tcp")])
+    ok = score_candidate(C, CLEAN, [rev(), agent], {**W, "backends": {**W["backends"], "agent": 0.4}}, 1, True, agent_enabled=True)
+    assert ok.qualified and ok.veto_reason == ""

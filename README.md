@@ -2,7 +2,7 @@
 
 在指定 AWS 区域批量创建临时 EC2 实例，查询其公网 IPv4 的信誉名单记录，并执行网络探测。工具按本次测量结果计算得分，保留排名靠前的实例并终止其余实例。
 
-结果用于比较本次候选，不代表长期网络质量、带宽或业务可用性。默认反向探测从 EC2 发往中国大陆目标，Globalping 从香港、台湾发往 EC2；这两种测量都不等同于中国大陆终端发起的业务访问。
+结果用于比较本次候选，不代表长期网络质量、带宽或业务可用性。测量分两个方向：`agent`（客户中国区服务器 → 候选 EC2）与 Globalping 的 CN 探针提供 China → AWS 方向的主信号；反向探测（候选 EC2 → 大陆目标）只作为 AWS → China 回程健康度，默认权重 0.1。跨境路由通常非对称，两个方向不能互相推断。评分使用逐包 P95 时延与抖动，并融合同网段（prefix）的历史得分。
 
 ## 快速开始
 
@@ -45,12 +45,44 @@ scripts/start_web.sh
 
 ## 探测源与网络要求
 
-| 配置名 | 测量方式 | 默认状态 | 限制 |
-|---|---|---|---|
-| `reverse` | EC2 经 SSM 向配置中的大陆目标执行 ICMP ping 和 TCP 连接测试 | 启用 | 目标是有限的公共地址和域名，不代表运营商全部网络或住宅宽带 |
-| `globalping` | 香港、台湾公共探针向候选 IP 发送 ping | 启用 | 不测量大陆终端访问；服务限额以提供方当前规则为准 |
-| `ripeatlas` | RIPE Atlas 在中国大陆的探针向候选 IP 发送 ping | 关闭 | 需 API key、credits 和可用探针；需显式启用 |
-| `itdog` | 配置中的公共节点向候选 IP 发送 ping | 关闭 | 非官方接口；节点 ID 与运营商映射需要维护，未验证节点为住宅宽带 |
+| 配置名 | 测量方式 | 方向 | 默认状态 | 限制 |
+|---|---|---|---|---|
+| `agent` | 客户中国区（或任意大陆）受 SSM 管理的服务器，经 SSM 向全部候选 IP 执行 ICMP ping 与 TCP 连接，输出逐包 RTT 与逐次连接耗时 | China → AWS | 关闭，需配置 `backends.agent.instances` | 只代表 agent 所在网络出口；每台 agent 的 isp 标签由配置给出，工具不校验 |
+| `reverse` | 候选 EC2 经 SSM 向配置中的大陆目标执行 ICMP ping 和 TCP 连接测试 | AWS → China | 启用（权重 0.1） | 目标是有限的公共地址和域名（部分为 anycast），只反映回程健康度 |
+| `globalping` | 香港、台湾、大陆公共探针向候选 IP 发送 ping，解析逐包 timings 得到 P95 与抖动 | 东亚/CN → AWS | 启用 | CN 探针数量少且多为数据中心出口，不代表住宅宽带；服务限额以提供方当前规则为准 |
+| `ripeatlas` | RIPE Atlas 在中国大陆的探针向候选 IP 发送 ping | China → AWS | 关闭 | 需 API key、credits 和可用探针；需显式启用 |
+| `itdog` | 配置中的公共节点向候选 IP 发送 ping | China → AWS | 关闭 | 非官方接口；节点 ID 与运营商映射需要维护，未验证节点为住宅宽带 |
+
+### 客户侧部署 China → AWS 探针（agent）
+
+`agent` 不需要客户开放任何入站端口，也不需要额外的上报服务：选择器通过 SSM `SendCommand` 把探测脚本下发到客户在中国区的服务器上执行，脚本只做出向 ping 和 TCP 连接，结果随命令输出返回。客户只需满足三点：
+
+1. 服务器受 SSM 管理：Amazon Linux 2023 / Ubuntu 官方镜像自带 SSM Agent，实例挂有含 `AmazonSSMManagedInstanceCore` 的实例角色，且能访问 SSM 端点（公网出口或 VPC 端点）。`aws ssm describe-instance-information` 中该实例 `PingStatus` 为 `Online` 即可。
+2. 运行选择器的一方对该账户有 `ssm:SendCommand`、`ssm:GetCommandInvocation`、`ssm:DescribeInstanceInformation` 权限。中国区是独立分区，通常用单独的 profile。
+3. 服务器上有 `ping`、`bash`、`timeout`、`date`；AL2023 与 Ubuntu 默认满足。
+
+配置示例（`config.yaml`）：
+
+```yaml
+backends:
+  agent:
+    enabled: true
+    profile: cn                 # 中国区凭证 profile；留空走默认凭证链
+    region: cn-north-1          # agent 实例所在区域
+    instances:                  # instance_id -> isp 标签；标签用于三网加权，也可写自由文本
+      i-0abc1234567890def: telecom
+      i-0fed0987654321cba: unicom
+    ping_count: 10
+    tcp_ports: [443]            # 建议填业务实际端口
+    tcp_count: 5
+    timeout_s: 180
+```
+
+工作方式：每轮候选拿到公网 IP 后，选择器对每台 agent 实例下发一条命令，脚本内遍历全部候选 IP；单台 agent 失败只记为该轮警告，全部 agent 失败时候选按 `agent_unavailable` 否决，不会凭其他探测源保留。isp 标签为 `telecom` / `unicom` / `mobile` 时按 `weights.isps` 加权，其他标签等权平均。
+
+真实客户场景下，客户在中国区已有的业务服务器就是最合适的 agent：它所在的网络出口就是业务流量真实经过的出口。用于试验时，可以用中国区账户临时启动一台最小实例充当 agent，用完终止。agent 脚本也可以在任何大陆 Linux 主机上手工执行（见 `crossborder_selector/probes/agent.py` 的 `build_agent_script`），输出以 `CROSSBORDER_AGENT_JSON:` 开头的一行 JSON。
+
+局限：一台 agent 只代表一个出口。若要宣称"三网最优"，至少电信、联通、移动各一台；跨境网络里运营商差异通常大于城市差异。
 
 仅启用反向探测时，工具使用无探测入站规则的 `crossborder-selector-sg`。启用任一外部探测源时，使用独立的 `crossborder-selector-ping-sg`，允许来自 `0.0.0.0/0` 的 IPv4 ICMP Echo Request（类型 8、代码 0），不开放 TCP/UDP 端口。公共探针地址会变化，因此此处不按固定探针 IP 限制来源。
 
@@ -60,12 +92,15 @@ scripts/start_web.sh
 
 ## 评分与检查状态
 
-每个样本得分为 `100 × (1 − 丢包率) × 延迟因子`。延迟因子在 `lat_good_ms` 和 `lat_bad_ms` 之间线性递减。同一探测源内先合并运营商样本，再按探测源权重计算综合分。只有返回有效测量数据的探测源参与权重归一化；不同覆盖范围下的得分应结合明细比较。
+每个样本得分为 `100 × (1 − 丢包率) × 延迟因子 × 抖动因子`。延迟因子取 P95 时延（探测源不提供逐包数据时退回平均值），在 `lat_good_ms` 和 `lat_bad_ms` 之间线性递减；抖动因子在抖动达到 `jitter_bad_ms` 时扣满 `jitter_penalty`，无抖动数据不扣。同一探测源内先合并运营商样本，再按探测源权重计算本次综合分（`instant_composite`）。只有返回有效测量数据的探测源参与权重归一化；不同覆盖范围下的得分应结合明细比较。
+
+最终用于排序的 `composite = (1 − prefix_history) × instant_composite + prefix_history × 同网段历史均分`。历史来自 `history/prefix_stats.json`，只在该网段样本数达到 `prefix_min_samples` 时融合，报告中 `prefix_history_score` 记录所用的历史分。融合的目的：单次几十个包的测量噪声大，同一 /16 或 /15 的过去表现更稳定；下一次抽到同网段 IP 时不必依赖大样本重测。
 
 以下情况会排除候选：
 
 - 未分配公网 IP，或命中所查询的信誉名单。
 - 已启用反向探测，但该探测失败、未覆盖全部配置运营商，或所有目标均未响应。
+- 已启用 `agent`，但没有任何 agent 实例返回有效样本（`agent_unavailable`）。
 - 有效探测源少于 `min_backends`。
 - 所有有效测量均没有成功响应。
 
@@ -88,9 +123,13 @@ CLI 和 Web 服务自动读取当前目录中的 `config.yaml`，也可用 `--co
 | `target_score` | `90` | 最高综合分达到此值可提前停止 |
 | `min_backends` | `1` | 有效探测源的最低数量，不得超过实际可用的已启用源数量 |
 | `protect` | `false` | CLI 在筛选结束后、Web 在人工选定后启用停止和终止保护 |
-| `weights.backends` | reverse .5 / globalping .2 / ripeatlas .15 / itdog .15 | 非负权重；已启用源须有正权重 |
+| `weights.backends` | agent .4 / globalping .3 / reverse .1 / ripeatlas .1 / itdog .1 | 非负权重；已启用源须有正权重。reverse 是回程信号，不应主导 |
 | `weights.isps` | 电信 .34 / 联通 .33 / 移动 .33 | 非负权重，总和须大于 0 |
-| `weights.lat_good_ms` / `lat_bad_ms` | `60` / `300` | 延迟因子的端点 |
+| `weights.lat_good_ms` / `lat_bad_ms` | `60` / `300` | 延迟因子的端点，作用于 P95（无逐包数据时为平均值） |
+| `weights.jitter_bad_ms` / `jitter_penalty` | `50` / `0.3` | 抖动达到 `jitter_bad_ms` 时扣满 `jitter_penalty`，0 表示不扣 |
+| `weights.prefix_history` / `prefix_min_samples` | `0.3` / `3` | 网段历史在最终分中的权重（须小于 1）与最低样本数 |
+| `backends.globalping.locations` / `limit_per_location` | `HK, TW, CN` / `3` | 同城探针位置差异可达一倍，每地区至少 3 个探针 |
+| `backends.agent.*` | 关闭 | 见"客户侧部署 China → AWS 探针" |
 | `subnet_id` / `security_group_id` / `instance_profile_name` | 空 | 未提供时准备或复用工具管理的资源 |
 
 RIPE Atlas 需要同时设置 `backends.ripeatlas.enabled: true` 和 `api_key`。也可通过 `--enable-backend ripeatlas` 启用。密钥字段及已知密钥在探测错误中的值会在报告和 Web 运行日志中脱敏。

@@ -16,12 +16,14 @@ def utc_now_iso() -> str:
 
 class Orchestrator:
     def __init__(self, cfg, ec2, ssm, backends, reputation_sources, prefix_lookup, infra, run_id,
-                 clock=utc_now_iso, log=print, on_event=None, should_stop=None):
+                 clock=utc_now_iso, log=print, on_event=None, should_stop=None, prefix_history=None):
         self.cfg, self.ec2, self.ssm = cfg, ec2, ssm
         self.backends, self.rep_sources = backends, reputation_sources
         self.prefix_lookup, self.infra, self.run_id = prefix_lookup, infra, run_id
         self.now, self.log = clock, log
         self.reverse_enabled = any(b.name == "reverse" for b in backends)
+        self.agent_enabled = any(b.name == "agent" for b in backends)
+        self.prefix_history = dict(prefix_history or {})  # 运行开始时的快照，本次结果不回喂自身
         # Web 层可注入的钩子：on_event 广播每轮进度，should_stop 供用户取消
         self.on_event = on_event or (lambda e: None)
         self.should_stop = should_stop or (lambda: False)
@@ -112,7 +114,9 @@ class Orchestrator:
             else:  # 无幸存者：跳过上线等待与拨测
                 results, errors = {}, {}
             scored = [score_candidate(c, rep, results.get(c.public_ip, []), self.cfg.weights,
-                                      self.cfg.min_backends, self.reverse_enabled) for c, rep in survivors]
+                                      self.cfg.min_backends, self.reverse_enabled,
+                                      prefix_history=self.prefix_history, agent_enabled=self.agent_enabled)
+                      for c, rep in survivors]
 
             pool = rank(list(incumbents) + scored)
             kept = [s for s in pool if s.qualified][: self.cfg.keep_top_k]

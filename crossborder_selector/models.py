@@ -57,6 +57,8 @@ class IspProbe:
     median_rtt_ms: Optional[float] = None  # 兼容旧字段名；当前探测器提供平均时延。
     target: str = ""
     method: str = ""          # ping / tcp
+    p95_rtt_ms: Optional[float] = None     # 逐包/逐次样本的 P95；探测源不提供逐包数据时为 None
+    jitter_ms: Optional[float] = None      # 相邻样本绝对差均值；同上
 
     @property
     def loss(self) -> float:
@@ -70,6 +72,7 @@ class ProbeResult:
     backend: str
     probes: list = field(default_factory=list)
     error: str = ""
+    warning: str = ""         # 部分探针/agent 失败但仍有可用样本时的说明，不影响 ok
 
     @property
     def ok(self) -> bool:
@@ -87,9 +90,11 @@ class CandidateScore:
     probe_results: list
     isp_scores: dict
     backend_scores: dict
-    composite: float
+    composite: float          # 最终用于排序的分：本次测量分与 prefix 历史分的加权
     qualified: bool
     veto_reason: str = ""
+    instant_composite: float = 0.0               # 仅本次测量的综合分
+    prefix_history_score: Optional[float] = None  # 参与融合的 prefix 历史均分；未融合时为 None
 
 
 @dataclass

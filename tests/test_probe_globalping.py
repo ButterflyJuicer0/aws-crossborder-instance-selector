@@ -1,3 +1,4 @@
+import pytest
 from crossborder_selector.models import Candidate
 from crossborder_selector.probes.globalping import GlobalpingBackend, API_BASE
 
@@ -79,3 +80,31 @@ def test_sends_bearer_token_when_configured():
     GlobalpingBackend({**CFG, "api_token": "secret"}, http=http, sleeper=clk.sleep, clock=clk).probe(
         [Candidate("i-1", "1.1.1.1")])
     assert http.calls and all(hdrs.get("Authorization") == "Bearer secret" for _, _, _, hdrs in http.calls)
+
+
+def _finished_with_timings():
+    return {"id": "m1", "status": "finished", "results": [
+        {"probe": _probe("TW"), "result": {"status": "finished",
+                                            "stats": {"total": 4, "rcv": 4, "avg": 2.775},
+                                            "timings": [{"ttl": 53, "rtt": 2.45}, {"ttl": 53, "rtt": 2.16},
+                                                        {"ttl": 53, "rtt": 4.23}, {"ttl": 53, "rtt": 2.26}]}},
+        {"probe": _probe("HK"), "result": {"status": "finished", "stats": {"total": 4, "rcv": 2, "avg": 50.0}}},
+    ]}
+
+
+class TimingsHttp(FakeHttp):
+    def __call__(self, method, url, body=None, headers=None):
+        if method == "POST":
+            return {"id": "m1"}
+        return _finished_with_timings()
+
+
+def test_parses_per_packet_timings_into_p95_and_jitter():
+    clk = FakeClock()
+    b = GlobalpingBackend(CFG, http=TimingsHttp(), sleeper=clk.sleep, clock=clk)
+    pr = b.probe([Candidate("i-1", "18.162.1.1")])["18.162.1.1"]
+    tw, hk = pr.probes
+    assert tw.median_rtt_ms == 2.775 and tw.p95_rtt_ms == 4.23
+    assert tw.jitter_ms == pytest.approx((0.29 + 2.07 + 1.97) / 3, abs=1e-3)
+    # 没有 timings 的结果仍可用，只是分位数字段为空
+    assert hk.median_rtt_ms == 50.0 and hk.p95_rtt_ms is None and hk.jitter_ms is None

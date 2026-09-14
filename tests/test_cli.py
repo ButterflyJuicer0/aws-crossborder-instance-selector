@@ -103,3 +103,15 @@ def test_report_regenerates(tmp_path, capsys):
     (out / "report.json").write_text(json.dumps(d))
     assert cli.main(["report", "--run-id", "xb-r", "--output-dir", str(tmp_path / "out")]) == 0
     assert (out / "report.md").exists() and (out / "candidates.csv").exists()
+
+
+def test_build_backends_adds_agent_with_injected_runner():
+    from crossborder_selector.probes.agent import AgentBackend
+    cfg = load_config(None, {"backends": {"agent": {"enabled": True, "region": "cn-north-1", "profile": "cn",
+                                                   "instances": {"i-0123456789abcdef0": "telecom"}}}})
+    sentinel = object()
+    backends = cli.build_backends(cfg, ssm_runner=None, agent_ssm=sentinel)
+    agents = [b for b in backends if isinstance(b, AgentBackend)]
+    assert len(agents) == 1 and agents[0].ssm is sentinel
+    # 未启用时不创建 agent 探测源，也不需要额外凭证
+    assert not any(b.name == "agent" for b in cli.build_backends(load_config(None), ssm_runner=None))

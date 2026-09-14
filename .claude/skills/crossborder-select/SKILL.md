@@ -11,7 +11,7 @@ metadata:
 
 ## 概述
 
-工具在指定 AWS 区域批量创建临时 EC2，查询公网 IPv4 的信誉名单，从外部探针和实例自身两个方向测量网络，按 `100 × (1 − 丢包率) × 延迟因子` 打分，保留前 K 台并终止其余。结果是一次测量快照，不代表长期质量或业务可用性。
+工具在指定 AWS 区域批量创建临时 EC2，查询公网 IPv4 的信誉名单，测量网络后按 `100 × (1 − 丢包率) × 延迟因子(P95) × 抖动因子` 打分，再与同网段历史均分融合，保留前 K 台并终止其余。测量方向分两类：`agent`（客户中国区 SSM 托管服务器 → 候选 IP）和 Globalping CN 探针是 China → AWS 主信号；`reverse`（候选 EC2 → 大陆目标）只是回程健康度，默认权重 0.1。结果是一次测量快照，不代表长期质量或业务可用性。
 
 所有相对路径从仓库根目录（含 `crossborder_selector/` 和 `scripts/find_best_instance.sh`）执行，Python 用项目 `.venv`。首次使用先 `cp config.example.yaml config.yaml`；仓库默认只有 example 文件，没有 `config.yaml` 时脚本静默使用内置默认值，填在 example 里的配置不会生效。
 
@@ -34,6 +34,7 @@ metadata:
 | 只用反向探测（不开 ICMP 入站） | 追加 `--disable-backend globalping` |
 | 指定子网 / 镜像 / 系统盘 | 追加 `--subnet-id subnet-xxx`、`--image-id ami-xxx`、`--root-volume-size-gib 30`；或写入 `config.yaml` 顶层键 `subnet_id`、`image_id` |
 | 启用可选探测源 | 追加 `--enable-backend itdog`；ripeatlas 还需 `config.yaml` 填 `api_key` |
+| 启用客户侧 agent（China → AWS） | `config.yaml` 填 `backends.agent.enabled: true`、`profile`、`region`、`instances: {i-xxx: telecom}`；实例须 SSM Online，见 MANUAL |
 | 本地 Web 向导 | `scripts/start_web.sh`（默认 http://127.0.0.1:8765）；演示用 `--demo` |
 | 清理未保留候选 | `.venv/bin/python -m crossborder_selector.cli cleanup --region <region> --run-id <run-id>` |
 | 重生成报告 | `.venv/bin/python -m crossborder_selector.cli report --run-id <run-id> --output-dir ./out` |
@@ -81,6 +82,9 @@ aws ec2 describe-instances --region <region> \
 # 追加反向探测：该 EC2 经 SSM 向大陆三网目标 ping/tcping，实例须受 SSM 管理；--region 填实例实际所在区域
 .venv/bin/python .claude/skills/crossborder-select/scripts/probe_ip.py 43.213.150.200 \
   --instance-id i-xxx --region ap-east-2 --profile personal
+# China → AWS 主信号：用中国区 SSM 托管实例做 agent 主动探测该 IP（ping + TCP 443），输出 P95/抖动
+.venv/bin/python .claude/skills/crossborder-select/scripts/probe_ip.py 43.213.150.200 \
+  --agent-instance i-xxx=telecom --agent-region cn-north-1 --agent-profile cn --tcp-port 443
 ```
 
 退出码 0 表示未命中名单且探测合格，1 表示命中或被否决，2 表示错误。`--json` 输出完整结构。
@@ -102,6 +106,7 @@ aws ec2 describe-instances --region <region> \
 | `no_public_ip` | 未分配公网 IP | 子网是否自动分配公网 IPv4；换子网或开启自动分配后重跑 |
 | `reputation` | 任一信誉源命中 | `reputation_results[]` 中 `listed=true` 的 source 和 detail；属正常淘汰，多跑几轮换 IP |
 | `reputation_unavailable` | GitHub 名单检查失败且 `require_badlist: true`，未进入探测 | `badlist_url` 是否返回原始文本；修 URL 或出网后重跑 |
+| `agent_unavailable` | 启用了 agent 但没有任何 agent 实例返回样本 | 中国区实例是否 SSM Online、`backends.agent.profile/region` 是否正确、agent 条目的 error |
 | `reverse_unavailable` | 反向探测无结果或解析失败 | SSM 是否 Online、实例角色、出网路径、`probe_results` 的 error |
 | `reverse_incomplete` | 反向探测返回了，但样本未同时覆盖 telecom/unicom/mobile | 对比报告内 `config.backends.reverse.targets` 与当前配置，三个键都要有目标；补全后重跑，旧候选已终止不能补测 |
 | `reverse_unreachable` | 反向探测全部目标 0 回包 | 目标是否可达、ICMP 是否被限速；换 `targets`，不要直接判定整个运营商不可达 |

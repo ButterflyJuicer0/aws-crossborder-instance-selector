@@ -194,7 +194,8 @@ Web 已保留但最终未选定的实例，应使用“终止其余保留候选�
 | 信誉 `listed` | 检查实际命中的源和名单；不是查询失败 |
 | Globalping 429 | 查询提供方当前限额，减少数量或配置有可用额度的 token |
 | RIPE Atlas 未启用 | 同时检查 enabled 与 api_key |
-| RunInstances 配额/容量错误 | 工具不针对这类错误主动缩批重试；减少规模或处理配额/容量后重新运行 |
+| RunInstances 容量错误（InsufficientInstanceCapacity） | 使用默认 VPC 时工具会自动依次换同 VPC 其他可用区的子网重试，日志会打出"容量不足，改用备选子网"；全部可用区都缺容量才报错。指定了 `subnet_id` 时没有备选，需换子网、换机型（如 c6g.2xlarge 换 c7g.2xlarge / m6g.2xlarge）或换区域 |
+| RunInstances 配额错误（VcpuLimitExceeded） | 工具不主动缩批；减少每轮数量或申请提升配额后重新运行 |
 | 保护设置失败 | 在 EC2 检查停止与终止保护各自状态；修复权限后重试 |
 | Web 状态未知 | 未完成残留查询不代表没有实例；使用按运行 ID 清理功能 |
 | 报告写入失败 | 检查输出目录与磁盘；先核对已标记的保留实例和残留候选 |

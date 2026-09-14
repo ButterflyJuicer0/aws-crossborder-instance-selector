@@ -309,7 +309,7 @@ Web 的“终止其余保留候选”用于清理人工选定后不再需要的�
 
 ## 运行前提与权限
 
-目标区域需要可用子网和出网路径。没有默认 VPC 时指定 `subnet_id`；安全组可显式提供或由工具准备。vCPU 配额应覆盖已有实例、本轮候选和上一轮保留实例，不能只按候选数量计算。
+目标区域需要可用子网和出网路径。没有默认 VPC 时指定 `subnet_id`；安全组可显式提供或由工具准备。使用默认 VPC 时，工具记录同 VPC 中其他提供该机型的可用区子网作为备选；某可用区报 `InsufficientInstanceCapacity` 会自动换备选子网重试，全部失败才报错。显式指定 `subnet_id` 时没有备选。vCPU 配额应覆盖已有实例、本轮候选和上一轮保留实例，不能只按候选数量计算。
 
 日常操作涉及：`ec2:RunInstances`、`ec2:Describe*`、`ec2:TerminateInstances`、`ec2:CreateTags`、`ec2:CreateSecurityGroup`、`ec2:AuthorizeSecurityGroupIngress`、`ec2:ModifyInstanceAttribute`、`iam:CreateRole`、`iam:AttachRolePolicy`、`iam:CreateInstanceProfile`、`iam:AddRoleToInstanceProfile`、`iam:TagRole`、`iam:TagInstanceProfile`、`iam:PassRole`、`iam:Get*`、`ssm:SendCommand`、`ssm:GetCommandInvocation`、`ssm:DescribeInstanceInformation`、`ssm:GetParameters`。Web 检查还使用 STS 身份查询、`servicequotas:GetServiceQuota` 和 `servicequotas:ListServiceQuotas`。
 

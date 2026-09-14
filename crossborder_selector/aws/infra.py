@@ -1,7 +1,7 @@
 """可复用的子网、安全组、SSM 实例配置及 AL2023 镜像。"""
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from botocore.exceptions import ClientError
 from crossborder_selector.config import enabled_backends, launch_specs, launch_groups
@@ -28,6 +28,8 @@ class Infra:
     instance_profile_name: str
     image_id: str
     launch_templates: tuple = ()
+    # instance_type -> 同 VPC 其他可用区、且提供该机型的子网；某可用区容量不足时按顺序回退。显式 subnet_id 时为空
+    alternate_subnets: dict = field(default_factory=dict)
 
 
 def arch_for_instance_type(instance_type: str) -> str:
@@ -97,14 +99,20 @@ def prepare_launch(ec2, ssm, cfg):
     return tuple(templates)
 
 
-def prepare_subnets(ec2, cfg):
-    """Choose a supported subnet per type, inside one VPC for the shared SG."""
+def prepare_subnets(ec2, cfg, alternates=None):
+    """Choose a supported subnet per type, inside one VPC for the shared SG.
+
+    alternates（可选 dict）会被填入 instance_type -> 其他可用区的候选子网，供容量不足时回退。
+    """
     result, vpc = {}, None
     for group in launch_groups(cfg):
         name = group["instance_type"]
         if name in result:
             continue
-        selected_vpc, subnet = find_default_subnet(ec2, cfg.subnet_id, name)
+        selected_vpc, ranked = find_default_subnets(ec2, cfg.subnet_id, name)
+        subnet = ranked[0]
+        if alternates is not None:
+            alternates[name] = ranked[1:]
         if vpc is not None and vpc != selected_vpc:
             raise ValueError("所有候选子网必须属于同一个 VPC")
         vpc = selected_vpc
@@ -121,9 +129,16 @@ def prepare_subnets(ec2, cfg):
 
 def find_default_subnet(ec2, subnet_id: str = "", instance_type: str = ""):
     """返回 (vpc_id, subnet_id)。给了 subnet_id 就只查它的 VPC。"""
+    vpc, ranked = find_default_subnets(ec2, subnet_id, instance_type)
+    return vpc, ranked[0]
+
+
+def find_default_subnets(ec2, subnet_id: str = "", instance_type: str = ""):
+    """返回 (vpc_id, [subnet_id, ...])：首个为主选，其余为同 VPC 其他可用区的备选（每可用区一个）。
+    给了 subnet_id 时只返回它本身，不做备选。"""
     if subnet_id:
         s = ec2.describe_subnets(SubnetIds=[subnet_id])["Subnets"][0]
-        return s["VpcId"], subnet_id
+        return s["VpcId"], [subnet_id]
     vpcs = ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])["Vpcs"]
     if not vpcs:
         raise RuntimeError(f"no default VPC in region {ec2.meta.region_name}; "
@@ -140,7 +155,13 @@ def find_default_subnet(ec2, subnet_id: str = "", instance_type: str = ""):
         subnets = [s for s in subnets if s["AvailabilityZone"] in zones]
         if not subnets:
             raise RuntimeError(f"默认 VPC 的子网所在可用区不提供 {instance_type}，请指定其他子网")
-    return vpc, sorted(subnets, key=lambda s: s["AvailabilityZone"])[0]["SubnetId"]
+    ranked, seen = [], set()
+    for s in sorted(subnets, key=lambda s: (s["AvailabilityZone"], s["SubnetId"])):
+        if s["AvailabilityZone"] in seen:
+            continue  # 每个可用区只保留一个子网：容量是按可用区算的，同区多个子网无意义
+        seen.add(s["AvailabilityZone"])
+        ranked.append(s["SubnetId"])
+    return vpc, ranked
 
 
 def needs_inbound_ping(cfg):
@@ -217,12 +238,13 @@ def ensure_instance_profile(iam) -> str:
 
 def ensure_infra(ec2, iam, ssm, cfg) -> Infra:
     templates = prepare_launch(ec2, ssm, cfg)
-    vpc_id, subnets = prepare_subnets(ec2, cfg)
+    alternates = {}
+    vpc_id, subnets = prepare_subnets(ec2, cfg, alternates)
     templates = tuple({**t, "SubnetId": subnets[t["InstanceType"]]} for t in templates)
     sg = cfg.security_group_id or ensure_security_group(ec2, vpc_id, needs_inbound_ping(cfg))
     validate_security_group(ec2, sg, vpc_id, needs_inbound_ping(cfg))
     profile = cfg.instance_profile_name or ensure_instance_profile(iam)
-    return Infra(subnets[cfg.instance_type], sg, profile, templates[0]["ImageId"], templates)
+    return Infra(subnets[cfg.instance_type], sg, profile, templates[0]["ImageId"], templates, alternates)
 
 
 def delete_infra(ec2, iam) -> None:

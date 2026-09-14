@@ -157,8 +157,9 @@ class RunManager:
                 # Web 服务本身已提供 /api/agent 接口，直接共用进程内信箱，不再另起监听器
                 from crossborder_selector.probes.agent_transport import shared_store
                 extra["agent_broker"] = shared_store()
+            ec2_log = lambda m: self.emit(run_id, {"type": "log", "message": str(m)})  # noqa: E731
             orch = self.orchestrator_factory(
-                cfg, Ec2Manager(clients["ec2"]), ssm_runner, build_backends(cfg, ssm_runner, **extra), build_sources(cfg.reputation),
+                cfg, Ec2Manager(clients["ec2"], log=ec2_log), ssm_runner, build_backends(cfg, ssm_runner, **extra), build_sources(cfg.reputation),
                 PrefixLookup(prefixes, cfg.region), infra, run_id,
                 log=lambda m: self.emit(run_id, {"type": "log", "message": str(m)}),
                 on_event=lambda e: self.emit(run_id, e),

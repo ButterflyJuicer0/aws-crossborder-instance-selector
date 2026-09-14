@@ -13,10 +13,14 @@ SOURCE_TAG = "crossborder-source-run"
 _LIVE_STATES = ["pending", "running", "stopping", "stopped"]
 
 
+_CAPACITY_CODES = {"InsufficientInstanceCapacity", "InsufficientCapacity"}
+
+
 class Ec2Manager:
-    def __init__(self, client, sleeper=time.sleep):
+    def __init__(self, client, sleeper=time.sleep, log=None):
         self.ec2 = client
         self._sleep = sleeper
+        self.log = log or (lambda m: None)
         self.launch_settings = {}
 
     def launch(self, n, run_id, round_no, infra, instance_type) -> list:
@@ -45,10 +49,29 @@ class Ec2Manager:
             raise
 
     def _launch_group(self, n, run_id, round_no, infra, instance_type, template):
-        """启动 n 台；IAM profile 刚建好时 RunInstances 会报 InvalidParameterValue，重试最多 6 次。"""
+        """启动 n 台。某可用区容量不足（InsufficientInstanceCapacity）时依次换 infra.alternate_subnets 里
+        的其他可用区子网重试；每个子网内部对 IAM profile 传播导致的 InvalidParameterValue 重试最多 6 次。"""
         request = dict(template)
         instance_type = request.pop("InstanceType", instance_type)
-        subnet_id = request.pop("SubnetId", infra.subnet_id)
+        primary = request.pop("SubnetId", infra.subnet_id)
+        alternates = [s for s in getattr(infra, "alternate_subnets", {}).get(instance_type, []) if s != primary]
+        tried, last = [], None
+        for subnet_id in [primary, *alternates]:
+            tried.append(subnet_id)
+            try:
+                return self._launch_in_subnet(n, run_id, round_no, infra, instance_type, template, request, subnet_id)
+            except ClientError as e:
+                last = e
+                if e.response["Error"]["Code"] not in _CAPACITY_CODES:
+                    raise
+                nxt = alternates[len(tried) - 1] if len(tried) - 1 < len(alternates) else None
+                self.log(f"{subnet_id} 容量不足（{instance_type}）"
+                         + (f"，改用备选子网 {nxt} 重试" if nxt else "，已无备选子网"))
+        msg = (f"{instance_type} 在已尝试的子网 {', '.join(tried)} 均容量不足；"
+               "可换机型、换区域，或在 config.yaml 指定其他可用区的 subnet_id")
+        raise ClientError({"Error": {"Code": last.response["Error"]["Code"], "Message": msg}}, "RunInstances") from last
+
+    def _launch_in_subnet(self, n, run_id, round_no, infra, instance_type, template, request, subnet_id):
         tags = [{"Key": RUN_TAG, "Value": run_id}, {"Key": ROUND_TAG, "Value": str(round_no)}]
         token = uuid.uuid4().hex
         last = None

@@ -111,3 +111,29 @@ def test_resolve_ami_arm():
     ec2, iam, ssm = _clients()
     ami = _seed_ami(ssm, ec2, "arm64")
     assert resolve_ami(ssm, "t4g.nano") == ami
+
+
+@mock_aws
+def test_ensure_infra_records_alternate_subnets_in_other_azs():
+    """默认 VPC 下记录同 VPC、其他可用区且提供该机型的子网，供容量不足时回退。"""
+    ec2, iam, ssm = _clients()
+    _seed_ami(ssm, ec2)
+    cfg = load_config(None, {"region": REGION})
+    infra = ensure_infra(ec2, iam, ssm, cfg)
+    alts = infra.alternate_subnets[cfg.instance_type]
+    assert infra.subnet_id not in alts and len(alts) >= 1
+    zones = {s["AvailabilityZone"] for s in ec2.describe_subnets(SubnetIds=[infra.subnet_id, *alts])["Subnets"]}
+    assert len(zones) == 1 + len(alts)  # 每个备选子网在不同可用区
+    vpcs = {s["VpcId"] for s in ec2.describe_subnets(SubnetIds=[infra.subnet_id, *alts])["Subnets"]}
+    assert len(vpcs) == 1
+
+
+@mock_aws
+def test_explicit_subnet_has_no_alternates():
+    ec2, iam, ssm = _clients()
+    _seed_ami(ssm, ec2)
+    vpc = ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])["Vpcs"][0]["VpcId"]
+    subnet = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc]}])["Subnets"][0]["SubnetId"]
+    cfg = load_config(None, {"region": REGION, "subnet_id": subnet})
+    infra = ensure_infra(ec2, iam, ssm, cfg)
+    assert infra.subnet_id == subnet and infra.alternate_subnets.get(cfg.instance_type, []) == []

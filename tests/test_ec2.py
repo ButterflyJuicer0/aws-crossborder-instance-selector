@@ -102,3 +102,51 @@ def test_launch_requests_exact_batch_size():
     ids = m.launch(3, "xb-run1", 2, infra, "t3.nano")
     assert fake.kw["MinCount"] == 3 and fake.kw["MaxCount"] == 3
     assert len(ids) == 3
+
+
+# ---- 容量不足时自动换可用区 ----
+
+class _CapacityEc2:
+    """假客户端：某些子网报 InsufficientInstanceCapacity，其余成功。"""
+    def __init__(self, full_subnets, fail_code="InsufficientInstanceCapacity"):
+        self.full, self.calls, self.fail_code = set(full_subnets), [], fail_code
+        self.meta = type("M", (), {"region_name": "ap-east-2"})()
+    def run_instances(self, **kw):
+        subnet = kw["NetworkInterfaces"][0]["SubnetId"]
+        self.calls.append(subnet)
+        if subnet in self.full:
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": self.fail_code, "Message": f"no capacity in {subnet}"}}, "RunInstances")
+        return {"Instances": [{"InstanceId": f"i-{subnet}-{i}"} for i in range(kw["MinCount"])]}
+
+
+def test_launch_falls_back_to_alternate_subnets_on_insufficient_capacity():
+    ec2 = _CapacityEc2(full_subnets={"subnet-a"})
+    logs = []
+    infra = Infra("subnet-a", "sg-1", "prof", "ami-1", alternate_subnets={"c6g.2xlarge": ["subnet-b", "subnet-c"]})
+    m = Ec2Manager(ec2, sleeper=lambda s: None, log=logs.append)
+    ids = m.launch(2, "xb-cap", 1, infra, "c6g.2xlarge")
+    assert ec2.calls == ["subnet-a", "subnet-b"]
+    assert len(ids) == 2 and all(m.launch_settings[i]["SubnetId"] == "subnet-b" for i in ids)
+    assert any("subnet-b" in line and "容量" in line for line in logs)
+
+
+def test_launch_raises_when_all_subnets_lack_capacity():
+    import pytest
+    from botocore.exceptions import ClientError
+    ec2 = _CapacityEc2(full_subnets={"subnet-a", "subnet-b"})
+    infra = Infra("subnet-a", "sg-1", "prof", "ami-1", alternate_subnets={"t3.nano": ["subnet-b"]})
+    with pytest.raises(ClientError) as ei:
+        Ec2Manager(ec2, sleeper=lambda s: None).launch(1, "xb-cap", 1, infra, "t3.nano")
+    assert ec2.calls == ["subnet-a", "subnet-b"]
+    assert "subnet-a" in str(ei.value) and "subnet-b" in str(ei.value)  # 报错列出已尝试的子网
+
+
+def test_launch_other_client_errors_do_not_trigger_subnet_fallback():
+    import pytest
+    from botocore.exceptions import ClientError
+    ec2 = _CapacityEc2(full_subnets={"subnet-a"}, fail_code="UnauthorizedOperation")
+    infra = Infra("subnet-a", "sg-1", "prof", "ami-1", alternate_subnets={"t3.nano": ["subnet-b"]})
+    with pytest.raises(ClientError):
+        Ec2Manager(ec2, sleeper=lambda s: None).launch(1, "xb-cap", 1, infra, "t3.nano")
+    assert ec2.calls == ["subnet-a"]

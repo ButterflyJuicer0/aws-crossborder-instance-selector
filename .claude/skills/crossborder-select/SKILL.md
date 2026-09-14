@@ -51,7 +51,7 @@ metadata:
 - [ ] 1 与用户确认区域、每轮数量、轮次、保留数、是否 --protect；真实运行产生费用，保留实例持续计费
 - [ ] 2 确认 config.yaml 存在（没有就 cp config.example.yaml config.yaml）；无默认 VPC 时填顶层键 `subnet_id: subnet-xxx`（须有出网路径且自动分配公网 IPv4），或命令行追加 --subnet-id
 - [ ] 3 跑 --dry-run，核对区域、数量、探测源、目标和安全组说明
-- [ ] 4 确认凭证：export AWS_PROFILE=<profile>（需要时）后 aws sts get-caller-identity；区域为 opt-in 时确认账户已启用
+- [ ] 4 确认凭证：export AWS_PROFILE=<profile>（需要时）后 aws sts get-caller-identity；区域为 opt-in 时确认账户已启用。Web 向导页脚会显示当前 profile、账户、ARN，STS 失败也会显示 profile 名和原因
 - [ ] 5 真实运行；第一行输出 run-id，立即记下并告知用户
 - [ ] 6 读 out/<run-id>/report.md：winners、stop_reason、每轮淘汰数、backend_errors
 - [ ] 7 提醒：保留实例不要 stop/start（换公网 IP），reboot 通常保留；实例内关机被设为 stop
@@ -110,6 +110,7 @@ aws ec2 describe-instances --region <region> \
 | 值 | 含义 | 先查什么，怎么修 |
 |---|---|---|
 | `no_public_ip` | 未分配公网 IP | 子网是否自动分配公网 IPv4；换子网或开启自动分配后重跑 |
+| （运行直接失败）`InsufficientInstanceCapacity` | 所有可尝试的可用区都没有该机型容量 | 报错里列出已尝试子网；换机型、换区域，或指定其他可用区 `subnet_id`。这不是 veto，而是 launch 失败：首轮失败整个 run 失败，后续轮失败 stop_reason=`launch_failed` 并保留在位者 |
 | `reputation` | 任一信誉源命中 | `reputation_results[]` 中 `listed=true` 的 source 和 detail；属正常淘汰，多跑几轮换 IP |
 | `reputation_unavailable` | GitHub 名单检查失败且 `require_badlist: true`，未进入探测 | `badlist_url` 是否返回原始文本；修 URL 或出网后重跑 |
 | `agent_unavailable` | 启用了 agent 但没有任何 agent 实例返回样本 | 中国区实例是否 SSM Online、`backends.agent.profile/region` 是否正确、agent 条目的 error |
@@ -146,6 +147,8 @@ NXDOMAIN 未命中；`127.0.0.x` 命中；`127.255.255.254/255` 是解析器被 
 | 错误 | 后果 | 正确做法 |
 |---|---|---|
 | 把 dry-run 通过当作权限、配额、网络已验证 | 真实运行时 RunInstances 失败 | dry-run 只读配置生成文本，凭证和配额另行检查 |
+| 遇到 `InsufficientInstanceCapacity` 就换区域重跑 | 浪费一轮 | 默认 VPC 下工具已自动换同 VPC 其他可用区子网重试（日志"容量不足，改用备选子网"）；全部可用区都缺才报错。显式 `subnet_id` 没有备选，此时换子网、换机型（c6g.2xlarge → c7g/m6g.2xlarge）或换区域 |
+| Web 运行失败后不知道怎么回到配置页 | 卡在失败页 | 失败页有"返回首页重新配置"按钮，先按需"查询并清理本次候选" |
 | 把 subnet_id、api_key 填进 config.example.yaml | 脚本找不到 config.yaml，静默用默认值 | 先 `cp config.example.yaml config.yaml` 再填 |
 | 给 find_best_instance.sh 传 `--profile` | 参数不存在，直接报错 | select/cleanup 用 `AWS_PROFILE` 环境变量 |
 | 对保留实例 stop/start | 自动分配的公网 IPv4 更换 | 需要重启用 reboot；要固定地址需自行申请 EIP |

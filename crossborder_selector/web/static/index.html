@@ -883,8 +883,12 @@ function showFailed(message, leftover, winners){
     ${winnerHtml}
     ${unknown ? `<p>尚未确认 AWS 上的残留实例。可按本次运行 ID 查询并清理。</p>` : leftover.length ? `<p style="font-size:13px">遗留实例（未终止）：</p><div class="iplist">${leftover.map(esc).join(", ")}</div>` : `<p style="font-size:13px">查询时没有发现待清理实例。</p>`}
     <div class="actions"><button class="btn danger" id="fail-clean" type="button"${canClean ? "" : " disabled"}>查询并清理本次候选</button>
+      <button class="btn" id="fail-home" type="button">返回首页重新配置</button>
       <span id="clean-note" class="pill neutral" hidden></span></div>
+    <p class="hint">容量不足（InsufficientInstanceCapacity）时工具已自动尝试同 VPC 其他可用区的子网；仍失败可换机型、换区域，或在高级设置指定其他可用区的子网。</p>
   </div>`;
+  const home = $("#fail-home");
+  if (home) home.addEventListener("click", () => { state.runId = null; state.runState = null; goStep(2); });
   const btn = $("#fail-clean");
   if (btn && canClean) btn.addEventListener("click", async () => {
     const targets = !unknown && leftover.length ? leftover.join("、") : "本次运行中未标记为保留的候选实例";

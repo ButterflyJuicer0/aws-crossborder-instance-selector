@@ -124,7 +124,7 @@ def _do_select(args, factory) -> int:
     infra = ensure_infra(clients["ec2"], clients["iam"], clients["ssm"], cfg)
     ssm_runner = SsmRunner(clients["ssm"])
     prefixes = load_ip_ranges(cache_path=os.path.join(cfg.output_dir, "ip-ranges.json"))
-    ec2mgr = Ec2Manager(clients["ec2"])
+    ec2mgr = Ec2Manager(clients["ec2"], log=print)
     orch = Orchestrator(cfg, ec2mgr, ssm_runner, build_backends(cfg, ssm_runner),
                         build_sources(cfg.reputation), PrefixLookup(prefixes, cfg.region), infra, run_id,
                         prefix_history=load_history(cfg.history_file))

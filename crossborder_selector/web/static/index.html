@@ -148,6 +148,7 @@ aside.hist h3{margin:0 0 10px;font-size:14px;font-weight:600;display:flex;align-
 .modal h3{margin:0 0 12px;font-size:16px}
 .modal .list{font-family:"IBM Plex Mono",monospace;font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:10px 0;max-height:140px;overflow:auto;white-space:pre-wrap}
 footer{padding:14px 28px 28px;color:var(--muted);font-size:12px;text-align:center}
+#aws-identity{margin-bottom:6px;word-break:break-all}#aws-identity .warn{color:var(--warn)}#aws-identity code{font-size:12px}
 [hidden]{display:none!important}
 /* Compact layout: primary fields first, details on demand. */
 main{display:block;max-width:1040px;padding:24px;margin:0 auto}
@@ -207,7 +208,7 @@ details.hist{padding:16px 0;border-top:1px solid var(--line);margin-top:28px}
     <div id="hist-list"><div class="empty">暂无运行记录</div></div>
   </details>
 </main>
-<footer id="service-note">默认仅监听本机，使用本机 AWS 凭证。费用为参考估算，实际以账单为准。</footer>
+<footer><div id="aws-identity" class="hint" aria-live="polite">AWS 凭证：读取中…</div><div id="service-note">默认仅监听本机，使用本机 AWS 凭证。费用为参考估算，实际以账单为准。</div></footer>
 
 <div id="modal-root"></div>
 
@@ -591,10 +592,23 @@ async function refreshAgentRegistry(){
   }catch(e){ el.textContent = "agent：注册表不可用（"+e.message+"）"; }
 }
 
+async function refreshAwsIdentity(){
+  const el = document.getElementById("aws-identity");
+  if(!el) return;
+  if(state.demo){ el.textContent = "AWS 凭证：演示模式，不接触 AWS。"; return; }
+  try{
+    const e = await api("/api/env?region="+encodeURIComponent(state.region||""));
+    const c = e.caller || {};
+    const who = c.arn ? `${esc(c.arn)}（账户 ${esc(c.account)}）` : "<b>未通过 STS 校验</b>";
+    el.innerHTML = `AWS 凭证：profile <code>${esc(c.profile||"default")}</code>（${esc(c.profile_source||"")}） · ${who} · 区域 <code>${esc(e.region||state.region||"")}</code>`
+      + (e.ok ? "" : ` · <span class="warn">${esc((e.problems||[]).join("；"))}</span>`);
+  }catch(err){ el.textContent = "AWS 凭证：无法读取（"+err.message+"）"; }
+}
+
 async function reloadOptions(){
   const region = $("#region-input").value.trim().toLowerCase();
   if (!region) return;
-  state.region = region; renderNav(); requestImages(true);
+  state.region = region; renderNav(); requestImages(true); refreshAwsIdentity();
   await loadOptions(true);
   if(state.step===2)refreshCapacity();
 }
@@ -1167,6 +1181,7 @@ async function init(){
     if(state.demo) $("#demo-banner").hidden=false;
     if(meta.allow_remote) $("#service-note").textContent="已启用远程访问；服务没有身份认证。";
   } catch(e){showError("无法读取配置："+e.message);return;}
+  refreshAwsIdentity();
   goStep(2);
   loadOptions().then(()=>{if(state.step===2)refreshCapacity();});
   api("/api/regions").then(data=>{

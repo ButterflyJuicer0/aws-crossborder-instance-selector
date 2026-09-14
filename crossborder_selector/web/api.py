@@ -181,14 +181,21 @@ class Api:
     def env(self, region: str, cfg=None) -> dict:
         check_plan = cfg is not None
         cfg = cfg or self.load({"region": region})
-        out = {"region": region, "caller": None, "default_vpc": {"present": False, "subnets": 0},
+        # 页面要能看到"现在用的是哪个 profile"：即使 STS 失败也先给出 profile 名，便于判断是凭证过期还是选错账户
+        profile_env = os.environ.get("AWS_PROFILE") or os.environ.get("AWS_DEFAULT_PROFILE")
+        caller = {"profile": profile_env or "default",
+                  "profile_source": "AWS_PROFILE" if os.environ.get("AWS_PROFILE") else
+                  ("AWS_DEFAULT_PROFILE" if os.environ.get("AWS_DEFAULT_PROFILE") else "默认凭证链"),
+                  "account": None, "arn": None}
+        out = {"region": region, "caller": caller, "default_vpc": {"present": False, "subnets": 0},
                "config_yaml_present": self._config_file() is not None, "problems": [], "notes": []}
         try:
             clients = self.factory(cfg)
             ident = clients["sts"].get_caller_identity()
-            out["caller"] = {"account": ident["Account"], "arn": ident["Arn"]}
+            caller.update({"account": ident["Account"], "arn": ident["Arn"]})
         except (ClientError, BotoCoreError) as exc:
-            return {**out, "ok": False, "problems": [f"AWS 凭证或区域不可用：{exc}。请检查 aws configure 或凭证环境变量。"]}
+            return {**out, "ok": False, "problems": [f"AWS 凭证或区域不可用（profile={caller['profile']}）：{exc}。"
+                                                     f"请检查 aws configure、AWS_PROFILE 或重新登录。"]}
         try:
             ec2 = clients["ec2"]
             if cfg.subnet_id:

@@ -81,7 +81,7 @@ aws ec2 describe-instances --region <region> \
 .venv/bin/python .claude/skills/crossborder-select/scripts/probe_ip.py 43.213.150.200 --locations HK,TW,CN --limit 3 --packets 8
 # 追加反向探测：该 EC2 经 SSM 向大陆三网目标 ping/tcping，实例须受 SSM 管理；--region 填实例实际所在区域
 .venv/bin/python .claude/skills/crossborder-select/scripts/probe_ip.py 43.213.150.200 \
-  --instance-id i-xxx --region ap-east-2 --profile personal
+  --instance-id i-xxx --region ap-east-2 --profile <profile>
 # China → AWS 主信号：用中国区 SSM 托管实例做 agent 主动探测该 IP（ping + TCP 443），输出 P95/抖动
 .venv/bin/python .claude/skills/crossborder-select/scripts/probe_ip.py 43.213.150.200 \
   --agent-instance i-xxx=telecom --agent-region cn-north-1 --agent-profile cn --tcp-port 443
@@ -90,7 +90,7 @@ aws ec2 describe-instances --region <region> \
   --agent-transport http --agent-listen 0.0.0.0:8766 --agent-token T --min-agents 1 --agent-timeout 120
 # S3 信箱（agent 与本机互不可达时）
 .venv/bin/python .claude/skills/crossborder-select/scripts/probe_ip.py 43.213.150.200 \
-  --agent-transport s3 --agent-s3 s3://my-bucket/crossborder-agent --agent-profile personal --agent-region ap-east-2
+  --agent-transport s3 --agent-s3 s3://my-bucket/crossborder-agent --agent-profile <profile> --agent-region <bucket-region>
 ```
 
 退出码 0 表示未命中名单且探测合格，1 表示命中或被否决，2 表示错误。`--json` 输出完整结构。

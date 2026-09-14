@@ -70,7 +70,9 @@ def test_env_sts_failure_is_reported_not_raised(tmp_path):
     f = _factory(); clients = f(None); clients["sts"] = BadSts()
     api = Api(factory=lambda cfg: clients, cwd=str(tmp_path))
     e = api.env("ap-east-1")
-    assert e["ok"] is False and e["caller"] is None and any("凭证" in p for p in e["problems"])
+    # STS 失败时仍返回 profile 名（便于判断是过期还是选错账户），只是账户/ARN 为空
+    assert e["ok"] is False and e["caller"]["account"] is None and e["caller"]["arn"] is None
+    assert e["caller"]["profile"] and any("凭证" in p for p in e["problems"])
 
 
 def test_env_factory_failure_is_reported_not_raised(tmp_path):
@@ -78,7 +80,7 @@ def test_env_factory_failure_is_reported_not_raised(tmp_path):
     def bad_factory(cfg):
         raise ProfileNotFound(profile="x")
     e = Api(factory=bad_factory, cwd=str(tmp_path)).env("ap-east-1")
-    assert e["ok"] is False and e["caller"] is None
+    assert e["ok"] is False and e["caller"]["account"] is None
     assert any("aws configure" in p for p in e["problems"])
 
 
@@ -166,3 +168,25 @@ def test_terminate_others_helper_unprotects_and_terminates(tmp_path):
     r = api.terminate_others("i-a", "ap-east-1", ["i-a", "i-b", "i-c"])
     assert r == {"terminated": ["i-b", "i-c"]}
     assert [kw for tag, kw in ec2.calls if tag == "terminate"] == [{"InstanceIds": ["i-b", "i-c"]}]
+
+
+def test_env_reports_aws_profile_in_use(tmp_path, monkeypatch):
+    api = Api(factory=_factory(), cwd=str(tmp_path))
+    monkeypatch.delenv("AWS_PROFILE", raising=False)
+    monkeypatch.delenv("AWS_DEFAULT_PROFILE", raising=False)
+    e = api.env("ap-east-1")
+    assert e["caller"]["profile"] == "default" and e["caller"]["profile_source"] == "默认凭证链"
+    monkeypatch.setenv("AWS_PROFILE", "cn")
+    e = api.env("ap-east-1")
+    assert e["caller"]["profile"] == "cn" and e["caller"]["profile_source"] == "AWS_PROFILE"
+    assert e["caller"]["account"] == "123456789012" and e["caller"]["arn"].endswith(":user/me")
+
+
+def test_env_profile_shown_even_when_sts_fails(tmp_path, monkeypatch):
+    class BadSts:
+        def get_caller_identity(self): raise _err("ExpiredToken")
+    monkeypatch.setenv("AWS_PROFILE", "stale")
+    api = Api(factory=lambda cfg: {"sts": BadSts(), "ec2": FakeEc2(), "service-quotas": FakeQuotas(), "iam": object(), "ssm": _DemoSsm()},
+              cwd=str(tmp_path))
+    e = api.env("ap-east-1")
+    assert e["ok"] is False and e["caller"] == {"profile": "stale", "profile_source": "AWS_PROFILE", "account": None, "arn": None}

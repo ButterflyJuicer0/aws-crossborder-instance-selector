@@ -571,6 +571,26 @@ function renderGroups(){
   list.querySelectorAll("[data-remove-group]").forEach(b=>b.addEventListener("click",()=>removeGroup(Number(b.dataset.removeGroup))));
   updateTypeInfo();
 }
+async function refreshAgentRegistry(){
+  const el = document.getElementById("agent-registry");
+  if(!el) return;
+  try{
+    const r = await fetch("/api/agent/registry");
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    const reg = await r.json();
+    const ids = Object.keys(reg);
+    if(!ids.length){
+      el.textContent = "agent：尚无已连接的 agent。在客户机器上运行 agent/crossborder_agent.py serve --server http://<本机>:<端口> 后会出现在这里；SSM 传输的实例不在此列表。";
+      return;
+    }
+    const now = Date.now()/1000;
+    el.innerHTML = "agent：已连接 " + ids.length + " 台 · " + ids.map(id => {
+      const age = Math.max(0, Math.round(now - (reg[id].last_seen||now)));
+      return `<code>${esc(id)}</code>（${esc(reg[id].isp||"未标注")}，${age}s 前）`;
+    }).join("、");
+  }catch(e){ el.textContent = "agent：注册表不可用（"+e.message+"）"; }
+}
+
 async function reloadOptions(){
   const region = $("#region-input").value.trim().toLowerCase();
   if (!region) return;
@@ -602,11 +622,13 @@ function mountConfig(){
       <div class="field"><label for="target-score">提前停止分数</label><input id="target-score" type="number" min="0" max="100" value="${f.target_score}"></div>
       <div class="field"><label><input id="c-protect" style="width:auto" type="checkbox"${f.protect ? " checked" : ""}> 选定后开启停止和终止保护</label></div>
       <div class="field full"><label for="badlist-url">GitHub IP 名单（原始文件 URL）</label><input id="badlist-url" value="${esc(f.badlist_url)}"><label class="hint"><input id="require-badlist" style="width:auto" type="checkbox"${f.require_badlist ? " checked" : ""}> 名单查询失败时排除该候选</label></div>
-      <div class="field full"><label>探测源</label>${state.options.backends.map(b => `<label class="hint"><input style="width:auto" id="b-${esc(b.name)}" type="checkbox"${f.backends[b.name] ? " checked" : ""}${b.needs_key && !b.key_present ? " disabled" : ""}> ${esc(b.name)} · ${esc(b.desc)}</label>`).join("")}</div>
+      <div class="field full"><label>探测源</label>${state.options.backends.map(b => `<label class="hint"><input style="width:auto" id="b-${esc(b.name)}" type="checkbox"${f.backends[b.name] ? " checked" : ""}${b.needs_key && !b.key_present ? " disabled" : ""}> ${esc(b.name)} · ${esc(b.desc)}</label>`).join("")}
+        <div id="agent-registry" class="hint" aria-live="polite">agent：读取中…</div></div>
     </div></details>
     <div id="est"></div><div class="actions"><button class="btn primary" id="cfg-next" type="button">查看启动计划</button></div>`;
   $("#reload-options").addEventListener("click", reloadOptions);
   $("#region-input").addEventListener("change", reloadOptions);
+  refreshAgentRegistry();
   $("#check-capacity").addEventListener("click", refreshCapacity);
   $("#add-group").addEventListener("click",()=>{
     if(f.batch_size>=50){showError("每轮最多启动 50 台，请先减少已有机型的台数。");return;}

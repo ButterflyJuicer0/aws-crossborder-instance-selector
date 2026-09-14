@@ -78,7 +78,39 @@ scripts/start_web.sh --port 8792 --no-browser
 
 ## 启用客户侧 agent 探测（China → AWS）
 
-agent 是默认权重最高的探测源，但需要客户在中国区提供一台受 SSM 管理的服务器。步骤：
+agent 是默认权重最高的探测源。agent 可以是客户任意一台能出网的机器（物理机、其他云、本地电脑），也可以是中国区受 SSM 管理的 EC2。
+
+### 任意机器（http 传输）
+
+1. 在 `config.yaml` 启用并设 token：
+
+```yaml
+backends:
+  agent:
+    enabled: true
+    transport: http
+    http: {listen: 0.0.0.0:8766, token: 'change-me'}   # 仅本机测试可保持 127.0.0.1 且不设 token
+    min_agents: 1
+    tcp_ports: [443]
+```
+
+2. 把 `agent/crossborder_agent.py` 复制到客户机器，先验证再常驻：
+
+```bash
+python3 crossborder_agent.py once --targets 8.8.8.8 --ports 443          # 本机探测能力自检
+python3 crossborder_agent.py serve --server http://<选择器地址>:8766 --token change-me \
+  --agent-id bj-telecom-01 --isp telecom --once                          # 领一次任务验证连通
+nohup python3 crossborder_agent.py serve --server http://<选择器地址>:8766 --token change-me \
+  --agent-id bj-telecom-01 --isp telecom >agent.log 2>&1 &              # 常驻
+```
+
+3. 运行选择器。CLI 会在 `http.listen` 起监听器；Web 向导用 Web 端口本身（agent 的 `--server` 指向 Web 地址即可），页面"探测源"下能看到已连接的 agent。监听地址对外暴露时用防火墙限制来源 IP。
+
+### 任意机器但选择器不可达（s3 传输）
+
+选择器侧 `transport: s3`、`s3.bucket` 填 bucket，`profile`/`region` 指向 bucket 所在账户；agent 侧 `serve --s3 s3://<bucket>/crossborder-agent --agent-id ... --isp ... --profile <凭证>`，需要 boto3。给 agent 的凭证只授予该前缀的读写。
+
+### 中国区 SSM 实例（ssm 传输）
 
 1. 确认服务器 SSM 在线（用中国区凭证）：
 
@@ -147,7 +179,7 @@ Web 已保留但最终未选定的实例，应使用“终止其余保留候选�
 
 | 现象 | 检查内容 |
 |---|---|
-| `agent_unavailable` | 中国区 agent 实例是否 SSM Online、`profile`/`region` 是否指向正确账户与区域、报告 `probe_results` 中 agent 条目的 error |
+| `agent_unavailable` | ssm：实例是否 SSM Online、`profile`/`region` 是否正确；http：agent 是否指向正确地址与 token（页面 registry 或 `GET /api/agent/registry` 能否看到它）、`timeout_s` 是否够 agent 完成一轮；s3：bucket/prefix 与凭证；报告 `probe_results` 中 agent 条目的 error |
 | `reverse_unavailable` | SSM 注册状态、实例角色、出网路径和报告中的具体错误 |
 | `reverse_incomplete` | 反向探测是否返回全部配置运营商的样本 |
 | `reverse_unreachable` / `unreachable` | 配置目标是否响应，外部探测的安全组、网络 ACL 和路由是否允许；不要直接认定整个运营商网络不可达 |

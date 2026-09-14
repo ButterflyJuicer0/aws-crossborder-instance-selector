@@ -97,3 +97,19 @@ def test_agent_enabled_with_instances_is_valid():
     cfg = load_config(None, {"backends": {"agent": {"enabled": True, "region": "cn-north-1", "profile": "cn",
                                                    "instances": {"i-0123456789abcdef0": "telecom"}}}})
     assert cfg.backends["agent"]["enabled"] is True
+
+
+def test_agent_transport_defaults_and_validation():
+    cfg = load_config(None)
+    a = cfg.backends["agent"]
+    assert a["transport"] == "ssm" and a["min_agents"] == 1
+    assert a["http"] == {"listen": "127.0.0.1:8766", "token": ""}
+    assert a["s3"] == {"bucket": "", "prefix": "crossborder-agent"}
+    # http / s3 传输启用时不要求 instances
+    for over in ({"transport": "http", "http": {"token": "t"}}, {"transport": "s3", "s3": {"bucket": "b"}}):
+        c = load_config(None, {"backends": {"agent": {"enabled": True, **over}}})
+        assert c.backends["agent"]["enabled"]
+    for bad in ({"transport": "carrier-pigeon"}, {"transport": "s3", "enabled": True},  # s3 需要 bucket
+                {"transport": "http", "http": {"listen": "not-a-listen"}}, {"min_agents": 0}):
+        with pytest.raises(ValueError):
+            load_config(None, {"backends": {"agent": bad}})

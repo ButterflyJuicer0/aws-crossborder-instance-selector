@@ -50,30 +50,57 @@ def build_agent_script(ips: list, ping_count: int, tcp_ports: list, tcp_count: i
     return "\n".join(lines) + "\n"
 
 
+def items_to_probes(items, isp: str) -> dict:
+    """共享结果格式 → {ip: [IspProbe...]}：每个 IP 一条 ping 样本，每个端口一条 tcp 样本。
+
+    items: [{"ip", "ping": {"sent", "rtts": [...]}, "tcp": [{"port", "attempts", "connect_ms": [...]}]}]
+    SSM 脚本、单文件 agent（HTTP/S3 传输）都产出这一格式。
+    """
+    out = {}
+    for item in items:
+        ip, probes = item["ip"], []
+        ping = item.get("ping") or {}
+        rtts = [float(x) for x in ping.get("rtts", [])]
+        s = rtt_summary(rtts)
+        probes.append(IspProbe(isp=isp, sent=int(ping.get("sent") or 0), received=len(rtts),
+                               median_rtt_ms=s["avg"], target=ip, method="ping",
+                               p95_rtt_ms=s["p95"], jitter_ms=s["jitter"]))
+        for t in item.get("tcp") or []:
+            ms = [float(x) for x in t.get("connect_ms", [])]
+            ts = rtt_summary(ms)
+            probes.append(IspProbe(isp=isp, sent=int(t.get("attempts") or 0), received=len(ms),
+                                   median_rtt_ms=ts["avg"], target=f"{ip}:{t['port']}", method="tcp",
+                                   p95_rtt_ms=ts["p95"], jitter_ms=ts["jitter"]))
+        out[ip] = probes
+    return out
+
+
 def parse_agent_output(text: str, isp: str) -> dict:
-    """返回 {ip: [IspProbe...]}：每个 IP 一条 ping 样本，每个端口一条 tcp 样本。"""
     for line in text.splitlines():
-        if not line.startswith(MARKER):
-            continue
-        items = json.loads(line[len(MARKER):])
-        out = {}
-        for item in items:
-            ip, probes = item["ip"], []
-            ping = item.get("ping") or {}
-            rtts = [float(x) for x in ping.get("rtts", [])]
-            s = rtt_summary(rtts)
-            probes.append(IspProbe(isp=isp, sent=int(ping.get("sent") or 0), received=len(rtts),
-                                   median_rtt_ms=s["avg"], target=ip, method="ping",
-                                   p95_rtt_ms=s["p95"], jitter_ms=s["jitter"]))
-            for t in item.get("tcp") or []:
-                ms = [float(x) for x in t.get("connect_ms", [])]
-                ts = rtt_summary(ms)
-                probes.append(IspProbe(isp=isp, sent=int(t.get("attempts") or 0), received=len(ms),
-                                       median_rtt_ms=ts["avg"], target=f"{ip}:{t['port']}", method="tcp",
-                                       p95_rtt_ms=ts["p95"], jitter_ms=ts["jitter"]))
-            out[ip] = probes
-        return out
+        if line.startswith(MARKER):
+            return items_to_probes(json.loads(line[len(MARKER):]), isp)
     raise ValueError("agent probe output has no CROSSBORDER_AGENT_JSON marker")
+
+
+def merge_agent_results(ips: list, per_agent: list, name: str = "agent") -> dict:
+    """合并多台 agent 的结果。per_agent: [(label, per_ip_probes_dict, error_text)]。
+
+    有样本的 IP 返回 ok；部分 agent 失败写入 warning；全部失败写入 error。
+    """
+    merged, errors = {ip: [] for ip in ips}, []
+    for label, per_ip, err in per_agent:
+        if err:
+            errors.append(f"{label}: {err}")
+            continue
+        for ip, probes in per_ip.items():
+            merged.setdefault(ip, []).extend(probes)
+    warning = "; ".join(errors)
+    out = {}
+    for ip in ips:
+        probes = merged.get(ip, [])
+        out[ip] = (ProbeResult(name, probes, "", warning=warning) if probes
+                   else ProbeResult(name, [], warning or "no agent result"))
+    return out
 
 
 class AgentBackend(ProbeBackend):
@@ -98,21 +125,6 @@ class AgentBackend(ProbeBackend):
 
     def probe(self, candidates: list) -> dict:
         ips = [c.public_ip for c in candidates]
-        merged, errors = {ip: [] for ip in ips}, []
         with ThreadPoolExecutor(max_workers=8) as pool:
-            for instance_id, isp, per_ip, err in pool.map(lambda kv: self._run_one(kv[0], kv[1], ips), self.instances.items()):
-                if err:
-                    errors.append(f"{instance_id}({isp}): {err}")
-                    continue
-                for ip, probes in per_ip.items():
-                    merged.setdefault(ip, []).extend(probes)
-        warning = "; ".join(errors)
-        out = {}
-        for ip in ips:
-            probes = merged.get(ip, [])
-            if probes:
-                # 有可用样本时仍返回 ok；部分 agent 失败记为警告文本（不影响 ok）
-                out[ip] = ProbeResult(self.name, probes, "", warning=warning)
-            else:
-                out[ip] = ProbeResult(self.name, [], warning or "no agent result")
-        return out
+            runs = list(pool.map(lambda kv: self._run_one(kv[0], kv[1], ips), self.instances.items()))
+        return merge_agent_results(ips, [(f"{iid}({isp})", per_ip, err) for iid, isp, per_ip, err in runs], self.name)

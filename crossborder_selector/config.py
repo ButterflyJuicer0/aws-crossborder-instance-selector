@@ -54,8 +54,13 @@ DEFAULTS = {
         "globalping": {"enabled": True, "locations": ["HK", "TW", "CN"], "limit_per_location": 3,
                        "packets": 8, "timeout_s": 90, "api_token": ""},
         # agent：客户中国区（或任意大陆）受 SSM 管理的服务器主动探测候选 IP，方向 China → AWS，主信号
-        "agent": {"enabled": False, "profile": "", "region": "cn-north-1",
-                  "instances": {},            # {instance_id: isp 标签}，如 {"i-0abc...": "telecom"}
+        "agent": {"enabled": False,
+                  "transport": "ssm",         # ssm：客户中国区 SSM 托管实例；http：agent 轮询选择器；s3：S3 信箱
+                  "profile": "", "region": "cn-north-1",   # ssm：agent 实例账户/区域；s3：bucket 凭证/区域
+                  "instances": {},            # ssm：{instance_id: isp}；http/s3：可选 {agent_id: isp} 覆盖 agent 自报标签
+                  "min_agents": 1,            # http/s3：至少收齐多少台 agent 的结果才结束等待
+                  "http": {"listen": "127.0.0.1:8766", "token": ""},   # 对外暴露时必须设 token 并限制来源
+                  "s3": {"bucket": "", "prefix": "crossborder-agent"},
                   "ping_count": 10, "tcp_ports": [443], "tcp_count": 5, "timeout_s": 180},
         "ripeatlas": {"enabled": False, "api_key": "", "probe_count": 10, "packets": 4,
                       "timeout_s": 120},
@@ -241,8 +246,20 @@ def _validate(d: dict) -> None:
     if not isinstance(agent["instances"], dict) or not all(
             isinstance(k, str) and isinstance(v, str) and k and v for k, v in agent["instances"].items()):
         raise ValueError("backends.agent.instances must map instance_id -> isp label (both strings)")
-    if agent["enabled"] and not agent["instances"]:
-        raise ValueError("backends.agent.enabled requires at least one entry in backends.agent.instances")
+    if agent["transport"] not in ("ssm", "http", "s3"):
+        raise ValueError("backends.agent.transport must be ssm, http or s3")
+    if agent["enabled"] and agent["transport"] == "ssm" and not agent["instances"]:
+        raise ValueError("backends.agent.transport=ssm requires at least one entry in backends.agent.instances")
+    if agent["transport"] == "s3" and agent["enabled"] and not (agent["s3"].get("bucket") or "").strip():
+        raise ValueError("backends.agent.transport=s3 requires backends.agent.s3.bucket")
+    if not isinstance(agent["s3"].get("bucket", ""), str) or not isinstance(agent["s3"].get("prefix", ""), str):
+        raise ValueError("backends.agent.s3.bucket and prefix must be strings")
+    listen = agent["http"].get("listen", "")
+    if not isinstance(listen, str) or not re.fullmatch(r"[A-Za-z0-9.\-\[\]:]*:[0-9]{1,5}", listen):
+        raise ValueError("backends.agent.http.listen must look like host:port, for example 127.0.0.1:8766")
+    if not isinstance(agent["http"].get("token", ""), str):
+        raise ValueError("backends.agent.http.token must be a string")
+    number(agent["min_agents"], "backends.agent.min_agents", 1, integer=True)
     if not isinstance(agent["region"], str) or not re.fullmatch(r"[a-z]{2}(?:-[a-z0-9]+)+-\d+", agent["region"]):
         raise ValueError("backends.agent.region must be an AWS region code, for example cn-north-1")
     if not isinstance(agent["profile"], str):

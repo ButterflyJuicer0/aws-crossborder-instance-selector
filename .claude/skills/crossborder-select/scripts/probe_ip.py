@@ -47,6 +47,13 @@ def parse_args(argv=None):
     p.add_argument("--agent-region", default=None, help="agent 实例所在区域；默认取配置 backends.agent.region")
     p.add_argument("--agent-profile", default=None, help="agent 账户的 AWS profile；默认取配置 backends.agent.profile")
     p.add_argument("--tcp-port", action="append", type=int, default=[], help="agent 的 TCP 探测端口，可重复；默认取配置")
+    p.add_argument("--agent-transport", choices=["ssm", "http", "s3"], default=None,
+                   help="agent 传输：ssm（中国区 SSM 实例）、http（本机监听，agent 轮询）、s3（S3 信箱）；默认取配置")
+    p.add_argument("--agent-listen", default=None, help="http 传输的监听地址，如 127.0.0.1:8766")
+    p.add_argument("--agent-token", default=None, help="http 传输的 Bearer token")
+    p.add_argument("--agent-s3", default=None, help="s3 传输的信箱，如 s3://bucket/crossborder-agent")
+    p.add_argument("--min-agents", type=int, default=None, help="http/s3 传输至少等待多少台 agent 的结果")
+    p.add_argument("--agent-timeout", type=float, default=None, help="等待 agent 结果的秒数；默认取配置 timeout_s")
     p.add_argument("--no-globalping", action="store_true", help="跳过 Globalping")
     p.add_argument("--no-reputation", action="store_true", help="跳过信誉检查")
     p.add_argument("--json", action="store_true", help="以 JSON 输出全部结果")
@@ -65,6 +72,39 @@ def build_cfg(args):
 def build_agent_backend(cfg, args):
     """--agent-instance 给出的实例覆盖配置；未给且配置未启用时不建 agent。"""
     acfg = dict(cfg.backends["agent"])
+    acfg["http"], acfg["s3"] = dict(acfg.get("http") or {}), dict(acfg.get("s3") or {})
+    transport = args.agent_transport or ("http" if (args.agent_listen or args.agent_token) else None) \
+        or ("s3" if args.agent_s3 else None) or acfg.get("transport", "ssm")
+    if args.agent_timeout:
+        acfg["timeout_s"] = args.agent_timeout
+    if args.min_agents:
+        acfg["min_agents"] = args.min_agents
+    if args.tcp_port:
+        acfg["tcp_ports"] = args.tcp_port
+    if transport in ("http", "s3"):
+        acfg["transport"] = transport
+        if args.agent_listen:
+            acfg["http"]["listen"] = args.agent_listen
+        if args.agent_token is not None:
+            acfg["http"]["token"] = args.agent_token
+        if args.agent_s3:
+            bucket, _, prefix = args.agent_s3[5:].partition("/")
+            acfg["s3"]["bucket"], acfg["s3"]["prefix"] = bucket, prefix
+        if args.agent_profile is not None:
+            acfg["profile"] = args.agent_profile
+        if args.agent_region:
+            acfg["region"] = args.agent_region
+        if transport == "s3" and not acfg["s3"].get("bucket"):
+            print("error: s3 传输需要 --agent-s3 s3://bucket/prefix 或配置 backends.agent.s3.bucket", file=sys.stderr)
+            raise SystemExit(2)
+        from crossborder_selector.cli import agent_broker
+        from crossborder_selector.probes.agent_transport import RemoteAgentBackend
+        if transport == "http":
+            print(f"agent(http): 监听 {acfg['http']['listen']}，等待最多 {acfg['timeout_s']:.0f}s 收齐 "
+                  f"{acfg.get('min_agents', 1)} 台 agent。另一台机器上运行：\n"
+                  f"  python3 agent/crossborder_agent.py serve --server http://<本机地址>:{acfg['http']['listen'].rsplit(':', 1)[1]} "
+                  f"--token '{acfg['http'].get('token', '')}' --agent-id <id> --isp <telecom|unicom|mobile>", file=sys.stderr)
+        return RemoteAgentBackend(agent_broker(acfg), acfg)
     if args.agent_instance:
         pairs = {}
         for item in args.agent_instance:
@@ -80,8 +120,6 @@ def build_agent_backend(cfg, args):
         acfg["region"] = args.agent_region
     if args.agent_profile is not None:
         acfg["profile"] = args.agent_profile
-    if args.tcp_port:
-        acfg["tcp_ports"] = args.tcp_port
     from crossborder_selector.cli import agent_ssm_runner
     from crossborder_selector.probes.agent import AgentBackend
     return AgentBackend(agent_ssm_runner(acfg), acfg)

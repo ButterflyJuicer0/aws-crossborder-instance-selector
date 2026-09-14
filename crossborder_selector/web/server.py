@@ -139,10 +139,31 @@ class Handler(BaseHTTPRequestHandler):
                 if not same_origin:
                     raise ApiError(403, "跨站请求被拒绝")
 
+    def _agent_api(self, method, u, qs):
+        """agent 领任务/回传结果：agent 在别的机器上，不走本机 Origin 护栏，改用配置里的 Bearer token。
+        registry 是页面读取的，走本机护栏、不需要 token。"""
+        from crossborder_selector.probes.agent_transport import handle_agent_request, shared_store
+        store = shared_store()
+        if u.path == "/api/agent/registry" and method == "GET":
+            self._guard(method)
+            return self._json(200, store.registry())
+        token = self.ctx["api"].load({}).backends["agent"]["http"].get("token", "")
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) if length else b""
+        status, obj = handle_agent_request(store, token, method, u.path, qs, self.headers, body)
+        if obj is None:
+            self.send_response(status)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return None
+        return self._json(status, obj)
+
     def _route(self, method):
-        self._guard(method)
         u = urlparse(self.path)
         qs = parse_qs(u.query)
+        if u.path.startswith("/api/agent/"):
+            return self._agent_api(method, u, qs)
+        self._guard(method)
         api, runs = self.ctx["api"], self.ctx["runs"]
         p = u.path
         if method == "GET" and p == "/":

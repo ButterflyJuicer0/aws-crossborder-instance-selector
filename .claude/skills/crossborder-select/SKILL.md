@@ -34,7 +34,7 @@ metadata:
 | 只用反向探测（不开 ICMP 入站） | 追加 `--disable-backend globalping` |
 | 指定子网 / 镜像 / 系统盘 | 追加 `--subnet-id subnet-xxx`、`--image-id ami-xxx`、`--root-volume-size-gib 30`；或写入 `config.yaml` 顶层键 `subnet_id`、`image_id` |
 | 启用可选探测源 | 追加 `--enable-backend itdog`；ripeatlas 还需 `config.yaml` 填 `api_key` |
-| 启用客户侧 agent（China → AWS） | `config.yaml` 填 `backends.agent.enabled: true`、`profile`、`region`、`instances: {i-xxx: telecom}`；实例须 SSM Online，见 MANUAL |
+| 启用客户侧 agent（China → AWS） | `config.yaml` 填 `backends.agent.enabled: true` 与 `transport`：`ssm` 需 `instances: {i-xxx: telecom}`；`http` 时客户机器运行 `python3 agent/crossborder_agent.py serve --server http://<选择器>:8766 --token T --agent-id X --isp telecom`；`s3` 需 `s3.bucket`。见 MANUAL |
 | 本地 Web 向导 | `scripts/start_web.sh`（默认 http://127.0.0.1:8765）；演示用 `--demo` |
 | 清理未保留候选 | `.venv/bin/python -m crossborder_selector.cli cleanup --region <region> --run-id <run-id>` |
 | 重生成报告 | `.venv/bin/python -m crossborder_selector.cli report --run-id <run-id> --output-dir ./out` |
@@ -85,6 +85,12 @@ aws ec2 describe-instances --region <region> \
 # China → AWS 主信号：用中国区 SSM 托管实例做 agent 主动探测该 IP（ping + TCP 443），输出 P95/抖动
 .venv/bin/python .claude/skills/crossborder-select/scripts/probe_ip.py 43.213.150.200 \
   --agent-instance i-xxx=telecom --agent-region cn-north-1 --agent-profile cn --tcp-port 443
+# 任意机器上的 agent：本机监听，另一台机器运行 agent/crossborder_agent.py serve --server http://<本机>:8766 ...
+.venv/bin/python .claude/skills/crossborder-select/scripts/probe_ip.py 43.213.150.200 \
+  --agent-transport http --agent-listen 0.0.0.0:8766 --agent-token T --min-agents 1 --agent-timeout 120
+# S3 信箱（agent 与本机互不可达时）
+.venv/bin/python .claude/skills/crossborder-select/scripts/probe_ip.py 43.213.150.200 \
+  --agent-transport s3 --agent-s3 s3://my-bucket/crossborder-agent --agent-profile personal --agent-region ap-east-2
 ```
 
 退出码 0 表示未命中名单且探测合格，1 表示命中或被否决，2 表示错误。`--json` 输出完整结构。

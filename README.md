@@ -55,34 +55,64 @@ scripts/start_web.sh
 
 ### 客户侧部署 China → AWS 探针（agent）
 
-`agent` 不需要客户开放任何入站端口，也不需要额外的上报服务：选择器通过 SSM `SendCommand` 把探测脚本下发到客户在中国区的服务器上执行，脚本只做出向 ping 和 TCP 连接，结果随命令输出返回。客户只需满足三点：
+agent 只做出向 ping 和 TCP 连接，所在机器不需要开放任何入站端口。按 agent 所在位置选传输方式，三种传输产出相同的结果格式，评分完全一致：
 
-1. 服务器受 SSM 管理：Amazon Linux 2023 / Ubuntu 官方镜像自带 SSM Agent，实例挂有含 `AmazonSSMManagedInstanceCore` 的实例角色，且能访问 SSM 端点（公网出口或 VPC 端点）。`aws ssm describe-instance-information` 中该实例 `PingStatus` 为 `Online` 即可。
-2. 运行选择器的一方对该账户有 `ssm:SendCommand`、`ssm:GetCommandInvocation`、`ssm:DescribeInstanceInformation` 权限。中国区是独立分区，通常用单独的 profile。
-3. 服务器上有 `ping`、`bash`、`timeout`、`date`；AL2023 与 Ubuntu 默认满足。
+| `transport` | agent 在哪 | agent 需要什么 | 选择器需要什么 |
+|---|---|---|---|
+| `ssm` | 客户 AWS 中国区受 SSM 管理的 EC2 | 实例角色含 `AmazonSSMManagedInstanceCore`，SSM `PingStatus` 为 Online | 对该账户的 `ssm:SendCommand`、`GetCommandInvocation`、`DescribeInstanceInformation` |
+| `http` | 任意机器：客户物理机、其他云、本地笔记本 | Python 3.8+，能出向访问选择器的监听端口，一个 token | CLI 自带监听器（默认 `127.0.0.1:8766`）；Web 向导直接用 Web 端口 |
+| `s3` | 任意机器，且选择器无法被 agent 访问时 | Python 3.8+ 与 boto3，出向 HTTPS，一组只能读写指定 bucket 前缀的凭证 | 一个 S3 bucket |
 
-配置示例（`config.yaml`）：
+**单文件 agent**：`agent/crossborder_agent.py` 只依赖标准库（S3 模式才要 boto3），复制到目标机器即可运行，Linux、macOS 均可。
+
+```bash
+# 验证部署：一次性探测并打印结果
+python3 agent/crossborder_agent.py once --targets 43.213.150.200 --ports 443
+
+# http 传输：轮询选择器领任务、探测、回传（--once 只跑一轮，用于验证）
+python3 agent/crossborder_agent.py serve --server http://<选择器地址>:8766 --token '<token>' \
+  --agent-id bj-telecom-01 --isp telecom
+
+# s3 传输
+python3 agent/crossborder_agent.py serve --s3 s3://<bucket>/crossborder-agent \
+  --agent-id sh-unicom-01 --isp unicom --profile <aws-profile>
+```
+
+`--agent-id` 全局唯一，`--isp` 为 `telecom` / `unicom` / `mobile` 时按 `weights.isps` 加权，其他标签等权平均；选择器侧可用 `backends.agent.instances: {agent_id: isp}` 覆盖 agent 自报的标签。
+
+**本地快速体验**（选择器与 agent 同一台笔记本）：
+
+```bash
+# 终端 1：Web 向导，或用 skill 的 probe_ip.py 检查单个 IP
+scripts/start_web.sh
+# 终端 2：把本机当 agent 接到 Web 端口
+python3 agent/crossborder_agent.py serve --server http://127.0.0.1:8765 --agent-id laptop --isp telecom
+```
+
+Web 向导"高级设置 → 探测源"下会显示已连接的 agent 及其 isp 标签和最近心跳。
+
+选择器侧配置（`config.yaml`）：
 
 ```yaml
 backends:
   agent:
     enabled: true
-    profile: cn                 # 中国区凭证 profile；留空走默认凭证链
-    region: cn-north-1          # agent 实例所在区域
-    instances:                  # instance_id -> isp 标签；标签用于三网加权，也可写自由文本
-      i-0abc1234567890def: telecom
-      i-0fed0987654321cba: unicom
-    ping_count: 10
-    tcp_ports: [443]            # 建议填业务实际端口
-    tcp_count: 5
+    transport: http            # ssm | http | s3
+    min_agents: 1              # 至少收齐几台 agent 的结果；其余等到 timeout_s 为止
+    http: {listen: 127.0.0.1:8766, token: ''}    # 对外暴露监听时必须设 token，并用防火墙限制来源
+    s3: {bucket: '', prefix: crossborder-agent}  # transport=s3 时填
+    profile: cn                # ssm：agent 实例账户；s3：bucket 账户
+    region: cn-north-1         # ssm：实例区域；s3：bucket 区域
+    instances: {}              # ssm：{instance_id: isp}；http/s3：可选 {agent_id: isp} 覆盖
+    tcp_ports: [443]           # 填业务真实端口，TCP 连接耗时按亚毫秒记录
     timeout_s: 180
 ```
 
-工作方式：每轮候选拿到公网 IP 后，选择器对每台 agent 实例下发一条命令，脚本内遍历全部候选 IP；单台 agent 失败只记为该轮警告，全部 agent 失败时候选按 `agent_unavailable` 否决，不会凭其他探测源保留。isp 标签为 `telecom` / `unicom` / `mobile` 时按 `weights.isps` 加权，其他标签等权平均。
+工作方式：每轮候选拿到公网 IP 后，选择器发布一个任务（全部候选 IP 加探测参数）。`ssm` 传输对每台实例下发一条命令；`http`/`s3` 传输由 agent 主动领取并回传，选择器等到 `min_agents` 台或 `timeout_s`。单台 agent 失败或缺席只记为该轮警告；没有任何 agent 返回时候选按 `agent_unavailable` 否决，不会凭其他探测源保留。
 
-真实客户场景下，客户在中国区已有的业务服务器就是最合适的 agent：它所在的网络出口就是业务流量真实经过的出口。用于试验时，可以用中国区账户临时启动一台最小实例充当 agent，用完终止。agent 脚本也可以在任何大陆 Linux 主机上手工执行（见 `crossborder_selector/probes/agent.py` 的 `build_agent_script`），输出以 `CROSSBORDER_AGENT_JSON:` 开头的一行 JSON。
+S3 传输给 agent 的最小 IAM 策略只需对 `arn:aws:s3:::<bucket>/<prefix>/*` 的 `s3:GetObject`、`s3:PutObject` 和对 bucket 的 `s3:ListBucket`（限定前缀）。选择器侧还需要 `s3:DeleteObject` 以撤下已完成的任务。
 
-局限：一台 agent 只代表一个出口。若要宣称"三网最优"，至少电信、联通、移动各一台；跨境网络里运营商差异通常大于城市差异。
+真实客户场景下，客户已有的业务服务器就是最合适的 agent：它所在的网络出口就是业务流量真实经过的出口。局限：一台 agent 只代表一个出口。若要宣称"三网最优"，至少电信、联通、移动各一台；跨境网络里运营商差异通常大于城市差异。
 
 仅启用反向探测时，工具使用无探测入站规则的 `crossborder-selector-sg`。启用任一外部探测源时，使用独立的 `crossborder-selector-ping-sg`，允许来自 `0.0.0.0/0` 的 IPv4 ICMP Echo Request（类型 8、代码 0），不开放 TCP/UDP 端口。公共探针地址会变化，因此此处不按固定探针 IP 限制来源。
 

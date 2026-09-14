@@ -37,10 +37,26 @@ def agent_ssm_runner(agent_cfg):
     return SsmRunner(session.client("ssm", region_name=agent_cfg["region"]))
 
 
-def build_backends(cfg, ssm_runner, agent_ssm=None) -> list:
+def agent_broker(agent_cfg):
+    """http：本进程独立监听器 + 共享信箱；s3：按 profile/region 建 S3 客户端。"""
+    if agent_cfg["transport"] == "http":
+        from crossborder_selector.probes.agent_transport import get_or_start_listener, shared_store
+        get_or_start_listener(agent_cfg["http"]["listen"], agent_cfg["http"].get("token", ""))
+        return shared_store()
+    from crossborder_selector.probes.agent_transport import S3AgentBroker
+    session = boto3.Session(profile_name=agent_cfg["profile"]) if agent_cfg.get("profile") else boto3.Session()
+    s3 = session.client("s3", region_name=agent_cfg["region"]) if agent_cfg.get("region") else session.client("s3")
+    return S3AgentBroker(s3, agent_cfg["s3"]["bucket"], agent_cfg["s3"].get("prefix", ""))
+
+
+def build_backends(cfg, ssm_runner, agent_ssm=None, agent_broker=None) -> list:
     b, out = cfg.backends, []
     if b["agent"]["enabled"]:
-        out.append(AgentBackend(agent_ssm or agent_ssm_runner(b["agent"]), b["agent"]))
+        if b["agent"]["transport"] == "ssm":
+            out.append(AgentBackend(agent_ssm or agent_ssm_runner(b["agent"]), b["agent"]))
+        else:
+            from crossborder_selector.probes.agent_transport import RemoteAgentBackend
+            out.append(RemoteAgentBackend(agent_broker or globals()["agent_broker"](b["agent"]), b["agent"]))
     if b["reverse"]["enabled"]:
         out.append(ReverseBackend(ssm_runner, b["reverse"]))
     if b["globalping"]["enabled"]:

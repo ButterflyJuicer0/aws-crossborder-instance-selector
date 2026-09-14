@@ -115,3 +115,14 @@ def test_build_backends_adds_agent_with_injected_runner():
     assert len(agents) == 1 and agents[0].ssm is sentinel
     # 未启用时不创建 agent 探测源，也不需要额外凭证
     assert not any(b.name == "agent" for b in cli.build_backends(load_config(None), ssm_runner=None))
+
+
+def test_build_backends_remote_transports_use_injected_broker():
+    from crossborder_selector.probes.agent_transport import RemoteAgentBackend
+    for over in ({"transport": "http", "http": {"listen": "127.0.0.1:0", "token": "t"}},
+                 {"transport": "s3", "s3": {"bucket": "b", "prefix": "p"}}):
+        cfg = load_config(None, {"backends": {"agent": {"enabled": True, **over}}})
+        broker = object()
+        backends = cli.build_backends(cfg, ssm_runner=None, agent_broker=broker)
+        remote = [b for b in backends if isinstance(b, RemoteAgentBackend)]
+        assert len(remote) == 1 and remote[0].broker is broker

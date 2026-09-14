@@ -233,3 +233,33 @@ def test_run_id_traversal_rejected(srv, tmp_path):
     assert 400 <= st < 500
     # 未发生目录逃逸写入（out/../selection.json 即 tmp_path/selection.json）
     assert not (tmp_path / "selection.json").exists()
+
+
+def test_agent_endpoints_share_store_and_registry_is_loopback_only(srv):
+    import urllib.error
+    from crossborder_selector.probes.agent_transport import shared_store
+    base, _mgr = srv
+    store = shared_store()
+    job = store.publish(["203.0.113.9"], 4, [443], 2, ttl_s=60)
+    try:
+        # demo 配置 token 为空：agent 不带 token 也能领任务；页面读取 registry 不需要 token
+        req = urllib.request.Request(f"{base}/api/agent/jobs?agent_id=web-test&isp=telecom")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            claimed = json.loads(r.read())
+        assert claimed["job_id"] == job["job_id"] and claimed["ips"] == ["203.0.113.9"]
+        body = json.dumps({"job_id": job["job_id"], "agent_id": "web-test", "isp": "telecom",
+                           "items": [{"ip": "203.0.113.9", "ping": {"sent": 4, "rtts": [50, 51]}, "tcp": []}]}).encode()
+        req = urllib.request.Request(f"{base}/api/agent/results", data=body, method="POST",
+                                     headers={"Content-Type": "application/json", "Origin": "http://evil.example"})
+        with urllib.request.urlopen(req, timeout=5) as r:  # agent 接口不受同源 Origin 护栏限制
+            assert json.loads(r.read())["accepted"] is True
+        assert store.collect(job["job_id"], 1, 0)["web-test"]["items"][0]["ping"]["rtts"] == [50, 51]
+        status, reg = _get(f"{base}/api/agent/registry")
+        assert status == 200 and reg["web-test"]["isp"] == "telecom"
+        # registry 走本机护栏：伪造非回环 Host 被拒
+        req = urllib.request.Request(f"{base}/api/agent/registry", headers={"Host": "example.com"})
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            urllib.request.urlopen(req, timeout=5)
+        assert ei.value.code == 403
+    finally:
+        store.collect(job["job_id"], 1, 0)  # 清理共享信箱里的任务

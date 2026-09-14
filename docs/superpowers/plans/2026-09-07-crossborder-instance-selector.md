@@ -1,6 +1,8 @@
 # AWS 跨境优选实例选择器 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> 历史设计记录（2026-09-09 已归档）：本文保留初始方案，部分行为已调整。当前配置、资源生命周期和测量限制以 [README](../../../README.md) 和 [MANUAL](../../../MANUAL.md) 为准。
+
+> 下列步骤和代码片段是初始实施计划的历史快照，不作为当前实现或操作指令。
 
 **Goal:** 一条命令在指定 AWS Region 多轮批量启动候选 EC2，从大陆视角拨测其自动分配的公网 IPv4，自动保留全局 Top-K 实例、终止其余，并输出 JSON/Markdown/CSV 报告。
 

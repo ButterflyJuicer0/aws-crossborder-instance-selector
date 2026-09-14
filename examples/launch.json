@@ -1,0 +1,15 @@
+{
+  "region": "ap-east-1",
+  "instance_type": "t4g.nano",
+  "batch_size": 2,
+  "max_rounds": 1,
+  "keep_top_k": 1,
+  "image_id": "",
+  "root_volume_size_gib": 12,
+  "root_volume_type": "gp3",
+  "root_volume_encrypted": true,
+  "instance_overrides": [
+    {},
+    {"root_volume_size_gib": 20}
+  ]
+}

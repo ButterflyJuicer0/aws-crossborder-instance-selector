@@ -27,25 +27,30 @@ class DnsblSource(ReputationSource):
         for zone in self.zones:
             try:
                 answers = self._resolver.resolve(f"{rev}.{zone}", "A")
-            except Exception:
-                continue  # NXDOMAIN 等未命中或解析失败：该 zone 不在名单
+            except dns.resolver.NXDOMAIN:
+                continue  # DNSBL 通过 NXDOMAIN 表示未命中。
+            except Exception as exc:
+                errors.append(f"{zone}: {type(exc).__name__}: {exc}")
+                continue
             listed_here, err_code = False, None
             for ans in answers:
                 try:
                     ip = ipaddress.ip_address(str(ans))
                 except ValueError:
+                    errors.append(f"{zone}: unexpected response {ans}")
                     continue
                 if ip in _ERROR_NET:
                     err_code = str(ans)
                 elif ip in _LISTED_NET:
                     listed_here = True
-                # 其它意外地址：不计命中
+                else:
+                    errors.append(f"{zone}: unexpected response {ans}")
             if listed_here:
                 hits.append(zone)
             elif err_code is not None:
                 errors.append(f"{zone}={err_code}")
         if hits:
-            return SourceResult(self.name, True, ",".join(hits))
+            return SourceResult(self.name, True, ",".join(hits), ";".join(errors))
         if errors:
-            return SourceResult(self.name, False, "error:" + ";".join(errors))
+            return SourceResult(self.name, False, "error:" + ";".join(errors), ";".join(errors))
         return SourceResult(self.name, False, "")

@@ -17,13 +17,18 @@ def srv(tmp_path):
     api = Api(factory=demo_factory, cwd=str(tmp_path))
     mgr = RunManager(api, str(tmp_path / "out"))
     restore = install_demo(mgr, step_delay=0)
-    server = make_server("127.0.0.1", 0, api, mgr, demo=True)
-    t = threading.Thread(target=server.serve_forever, daemon=True)
-    t.start()
-    base = f"http://127.0.0.1:{server.server_address[1]}"
-    yield base, mgr
-    server.shutdown()
-    restore()
+    server = None
+    try:
+        server = make_server("127.0.0.1", 0, api, mgr, demo=True)
+        t = threading.Thread(target=server.serve_forever, daemon=True)
+        t.start()
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        yield base, mgr
+    finally:
+        if server:
+            server.shutdown()
+            server.server_close()
+        restore()
 
 
 def _get(url, raw=False):
@@ -53,14 +58,18 @@ def _req(url, method="POST", headers=None, data=b"{}"):
 def test_index_and_meta(srv):
     base, _ = srv
     status, body = _get(base + "/", raw=True)
-    assert status == 200 and b"<html" in body.lower() and "向导".encode() in body
-    assert _get(base + "/api/meta")[1]["demo"] is True
+    assert status == 200 and b"<html" in body.lower() and b'id="content"' in body
+    meta = _get(base + "/api/meta")[1]
+    assert meta["demo"] is True and meta["default_region"] == "ap-east-1"
 
 
 def test_env_options_plan(srv):
     base, _ = srv
     assert _get(base + "/api/env?region=ap-east-1")[1]["ok"] is True
     assert _get(base + "/api/options?region=ap-east-1")[1]["instance_types"]
+    images = _get(base + "/api/images?region=ap-east-1&instance_type=t4g.nano")[1]
+    assert len(images["images"]) == 3
+    assert all(i["architecture"] == "arm64" for i in images["images"])
     st, p = _post(base + "/api/plan", {"region": "ap-east-1", "batch_size": 3, "max_rounds": 1})
     assert st == 200 and "3 x" in p["plan_summary"]
     st, e = _post(base + "/api/plan", {"batch_size": 0})
@@ -101,7 +110,7 @@ def test_run_lifecycle_and_sse(srv):
     # GET 详情带回 selection
     assert _get(base + f"/api/runs/{rid}")[1]["selection"]["selected"] == winners[0]
     st, cl = _post(base + "/api/cleanup", {"run_id": rid})
-    assert st == 200 and cl["run_id"] == rid
+    assert st == 200 and cl["run_id"] == rid and cl["terminated"] == []
 
 
 def test_cancel_finished_run_404_and_sse_replays_terminal(srv):
@@ -151,6 +160,11 @@ def test_terminate_others_endpoint(srv):
     # 之后单独终止其余保留候选
     st, r = _post(base + f"/api/runs/{rid}/terminate_others", {})
     assert st == 200 and r["terminated"] == winners[1:]
+    refreshed = _get(base + f"/api/runs/{rid}")[1]
+    assert refreshed["selection"]["terminated"] == winners[1:]
+    st, again = _post(base + f"/api/runs/{rid}/terminate_others", {})
+    assert st == 200 and again["terminated"] == []
+    assert again["selection"]["terminated"] == winners[1:]
 
 
 def test_cleanup_rejects_invalid_run_id(srv):
@@ -181,8 +195,10 @@ def test_post_guard_content_type_origin_and_host(srv):
     st, b = _req(url, headers={"Content-Type": "application/json", "Origin": "http://evil.example.com"}, data=body)
     assert st == 403 and json.loads(b)["error"]
     # 同源（loopback）Origin → 放行
-    st, _ = _req(url, headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:1234"}, data=body)
+    st, _ = _req(url, headers={"Content-Type": "application/json", "Origin": base}, data=body)
     assert st == 200
+    st, _ = _req(url, headers={"Content-Type": "application/json", "Origin": "http://127.0.0.1:1"}, data=body)
+    assert st == 403
     # 非回环 Host（任意请求）→ 403
     st, b = _req(base + "/api/meta", method="GET", headers={"Host": "evil.example.com"}, data=None)
     assert st == 403 and json.loads(b)["error"]

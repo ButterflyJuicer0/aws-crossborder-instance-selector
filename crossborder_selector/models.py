@@ -1,6 +1,7 @@
 """全部数据模型。只放数据与派生属性，不放逻辑。"""
 from dataclasses import dataclass, field
 from typing import Optional
+import math
 
 
 @dataclass
@@ -11,6 +12,9 @@ class Candidate:
     round: int = 0
     launched_at: str = ""     # ISO8601 UTC
     ssm_online: bool = True   # orchestrator 在 wait_online 后设置
+    image_id: str = ""
+    root_volume: dict = field(default_factory=dict)
+    instance_type: str = ""
 
 
 @dataclass
@@ -18,17 +22,30 @@ class SourceResult:
     source: str
     listed: bool
     detail: str = ""
+    error: str = ""
+
+    @property
+    def status(self):
+        if self.listed:
+            return "listed"
+        return "unknown" if self.error or self.detail.startswith("error:") else "clear"
 
 
 @dataclass
 class ReputationResult:
     address: str
     results: list
-    score: float
+    score: Optional[float]
 
     @property
     def any_listed(self) -> bool:
         return any(r.listed for r in self.results)
+
+    @property
+    def status(self):
+        if self.any_listed:
+            return "listed"
+        return "clear" if self.results and all(r.status == "clear" for r in self.results) else "unknown"
 
 
 @dataclass
@@ -37,7 +54,7 @@ class IspProbe:
     isp: str
     sent: int
     received: int
-    median_rtt_ms: Optional[float] = None
+    median_rtt_ms: Optional[float] = None  # 兼容旧字段名；当前探测器提供平均时延。
     target: str = ""
     method: str = ""          # ping / tcp
 
@@ -56,7 +73,11 @@ class ProbeResult:
 
     @property
     def ok(self) -> bool:
-        return not self.error and bool(self.probes)
+        return not self.error and bool(self.probes) and all(
+            p.sent > 0 and 0 <= p.received <= p.sent and
+            (p.received == 0 or (p.median_rtt_ms is not None
+                                and math.isfinite(p.median_rtt_ms) and p.median_rtt_ms >= 0))
+            for p in self.probes)
 
 
 @dataclass

@@ -28,6 +28,12 @@ def run_backends(backends, candidates, max_workers=4):
         for name, out, err in pool.map(one, backends):
             if err:
                 errors[name] = err
+            candidate_errors = []
             for c in candidates:
-                results[c.public_ip].append(out.get(c.public_ip) or ProbeResult(name, [], err or "no result"))
+                result = out.get(c.public_ip) or ProbeResult(name, [], err or "no result")
+                results[c.public_ip].append(result)
+                if not result.ok:
+                    candidate_errors.append(f"{c.public_ip}: {result.error or 'invalid or empty samples'}")
+            if candidate_errors:
+                errors[name] = "; ".join(candidate_errors)
     return results, errors

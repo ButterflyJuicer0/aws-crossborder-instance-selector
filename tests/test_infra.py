@@ -4,7 +4,7 @@ from moto import mock_aws
 
 from crossborder_selector.aws.infra import (
     ensure_infra, delete_infra, arch_for_instance_type, resolve_ami,
-    SG_NAME, ROLE_NAME, PROFILE_NAME, AMI_PARAMS,
+    SG_NAME, PING_SG_NAME, ROLE_NAME, PROFILE_NAME, AMI_PARAMS,
 )
 from crossborder_selector.config import load_config
 
@@ -37,8 +37,10 @@ def test_ensure_infra_creates_then_reuses():
     b = ensure_infra(ec2, iam, ssm, cfg)
     assert a == b
     assert a.image_id == ami and a.instance_profile_name == PROFILE_NAME
-    sgs = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SG_NAME]}])["SecurityGroups"]
-    assert len(sgs) == 1 and sgs[0]["IpPermissions"] == []
+    sgs = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [PING_SG_NAME]}])["SecurityGroups"]
+    assert len(sgs) == 1
+    assert sgs[0]["IpPermissions"][0]["IpProtocol"] == "icmp"
+    assert sgs[0]["IpPermissions"][0]["FromPort"] == 8
     assert {t["Key"]: t["Value"] for t in sgs[0]["Tags"]}["crossborder-managed"] == "true"
     roles = iam.list_attached_role_policies(RoleName=ROLE_NAME)["AttachedPolicies"]
     assert any(p["PolicyName"] == "AmazonSSMManagedInstanceCore" for p in roles)
@@ -47,15 +49,16 @@ def test_ensure_infra_creates_then_reuses():
 @mock_aws
 def test_ensure_infra_honours_explicit_ids():
     ec2, iam, ssm = _clients()
-    _seed_ami(ssm, ec2)
+    image = _seed_ami(ssm, ec2)
     vpc = ec2.create_vpc(CidrBlock="10.9.0.0/16")["Vpc"]["VpcId"]
     subnet = ec2.create_subnet(VpcId=vpc, CidrBlock="10.9.1.0/24")["Subnet"]["SubnetId"]
     sg = ec2.create_security_group(GroupName="mine", Description="d", VpcId=vpc)["GroupId"]
     cfg = load_config(None, {"region": REGION, "subnet_id": subnet, "security_group_id": sg,
-                             "image_id": "ami-custom", "instance_profile_name": "my-profile"})
+                             "image_id": image, "instance_profile_name": "my-profile",
+                             "disable_backends": ["globalping"]})
     infra = ensure_infra(ec2, iam, ssm, cfg)
     assert infra.subnet_id == subnet and infra.security_group_id == sg
-    assert infra.image_id == "ami-custom" and infra.instance_profile_name == "my-profile"
+    assert infra.image_id == image and infra.instance_profile_name == "my-profile"
 
 
 def test_missing_default_vpc_raises():
@@ -70,14 +73,13 @@ def test_missing_default_vpc_raises():
 
 
 @mock_aws
-def test_delete_infra_removes_managed_resources():
+def test_delete_infra_removes_managed_regional_groups_and_keeps_iam():
     ec2, iam, ssm = _clients()
     _seed_ami(ssm, ec2)
     ensure_infra(ec2, iam, ssm, load_config(None, {"region": REGION}))
     delete_infra(ec2, iam)
-    assert ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SG_NAME]}])["SecurityGroups"] == []
-    with pytest.raises(iam.exceptions.NoSuchEntityException):
-        iam.get_instance_profile(InstanceProfileName=PROFILE_NAME)
+    assert ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SG_NAME, PING_SG_NAME]}])["SecurityGroups"] == []
+    assert iam.get_instance_profile(InstanceProfileName=PROFILE_NAME)["InstanceProfile"]
 
 
 @mock_aws

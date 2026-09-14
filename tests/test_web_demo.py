@@ -39,7 +39,8 @@ def test_demo_is_deterministic_and_stoppable():
 def test_demo_factory_serves_api_env_and_options(tmp_path):
     api = Api(factory=demo_factory, cwd=str(tmp_path))
     e = api.env("ap-east-1")
-    assert e["ok"] and e["caller"]["account"] == "123456789012" and e["vcpu_quota"] == 64.0
+    assert e["ok"] and e["caller"]["account"] == "123456789012"
+    assert api.capacity(api.load({}))["vcpu_quota"] == 64.0
     o = api.options("ap-east-1")
     assert len(o["instance_types"]) >= 9
 

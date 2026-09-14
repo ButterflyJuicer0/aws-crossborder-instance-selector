@@ -203,3 +203,23 @@ def test_list_marks_stale_running_as_unknown(monkeypatch, tmp_path):
     mgr = _patched(monkeypatch, tmp_path, load_config(None, {"region": "ap-east-1"}))
     rows = mgr.list()
     assert rows[0]["run_id"] == "xb-old" and rows[0]["state"] == "unknown"
+
+
+def test_failed_leftover_query_is_unknown_and_errors_are_redacted(monkeypatch, tmp_path):
+    from crossborder_selector.config import load_config
+    token = "sensitive-review-token"
+    mgr = _patched(monkeypatch, tmp_path, load_config(overrides={
+        "backends": {"globalping": {"api_token": token}}}))
+    class Broken:
+        def describe_instances(self, **kwargs):
+            raise RuntimeError("credentials unavailable")
+    mgr.api.factory = lambda cfg: {"ec2": Broken(), "iam": object(), "ssm": object()}
+    class FailedOrch(FakeOrch):
+        def run(self):
+            self.log(f"failed with {token}")
+            raise RuntimeError(f"failed with {token}")
+    mgr.orchestrator_factory = FailedOrch
+    rec = _wait(mgr, mgr.start({}))
+    assert rec.state == "failed" and rec.leftover_instance_ids is None
+    assert token not in rec.error and token not in json.dumps(rec.events)
+    assert "[redacted]" in json.dumps(rec.events)

@@ -87,17 +87,28 @@ def test_tournament_replaces_incumbent_and_stops_on_target():
     assert rr.winners[0].candidate.instance_id == "i-3"
 
 
+def test_high_score_does_not_stop_before_desired_retention_count_is_met():
+    ec2 = FakeEc2([f"10.0.0.{i}" for i in range(1, 10)])
+    cfg = _cfg(batch_size=3, max_rounds=3, keep_top_k=7, target_score=0)
+    result = Orchestrator(cfg, ec2, FakeSsm(), [ScriptedBackend({})], [], lambda _: "", INFRA,
+                          "xb-retain", log=lambda _: None).run()
+    assert len(result.rounds) == 3
+    assert [len(r.launched) for r in result.rounds] == [3, 3, 3]
+    assert len(result.winners) == 7
+    assert result.stop_reason == "target_score_reached"
+
+
 def test_offline_ssm_marks_candidate_and_min_backends_veto():
     ec2 = FakeEc2(["10.0.0.1", "10.0.0.2"])
     class Offline(ProbeBackend):
         name = "reverse"
         def probe(self, cands):
             return {c.public_ip: (ProbeResult("reverse", [], "ssm offline") if not c.ssm_online
-                                  else ProbeResult("reverse", [IspProbe("telecom", 4, 4, 30.0)])) for c in cands}
+                                  else ProbeResult("reverse", [IspProbe(isp, 4, 4, 30.0) for isp in ("telecom", "unicom", "mobile")])) for c in cands}
     orch = Orchestrator(_cfg(max_rounds=1), ec2, FakeSsm(offline=["i-1"]), [Offline()], [], lambda ip: "", INFRA, "xb-t", log=lambda *a: None)
     rr = orch.run()
     scored = {s.candidate.instance_id: s for s in rr.rounds[0].scored}
-    assert scored["i-1"].veto_reason == "min_backends" and scored["i-2"].qualified
+    assert scored["i-1"].veto_reason == "reverse_unavailable" and scored["i-2"].qualified
     assert rr.winners[0].candidate.instance_id == "i-2"
 
 

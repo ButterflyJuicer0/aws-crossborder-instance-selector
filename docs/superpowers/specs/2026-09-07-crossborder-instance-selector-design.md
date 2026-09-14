@@ -1,18 +1,20 @@
 # AWS 跨境优选实例选择器 — 设计文档
 
+> 历史设计记录（2026-09-09 已归档）：本文保留初始方案，部分行为已调整。当前配置、资源生命周期和测量限制以 [README](../../../README.md) 和 [MANUAL](../../../MANUAL.md) 为准。
+
 日期：2026-09-07
 状态：已与需求方确认，进入实施计划阶段
 
 ## 1. 背景与目标
 
-AWS 没有"跨境优选 IP"这类服务。EC2 自动分配的公网 IPv4 无法转换为 EIP；EIP 的分配器会反复返回同一地址，且受每 Region 5 个的配额限制。因此"选一个好 IP"在 AWS 上最可靠的落地方式是：**批量启动临时 EC2，测其自动分配的公网 IPv4 从中国大陆访问的质量，保留胜出的实例，终止其余**。只要胜出实例持续运行（reboot 不换 IP，stop/start 会换），这个 IP 就一直可用。
+本项目批量启动 EC2，测量其自动分配的公网 IPv4，并保留当前样本中得分最高的实例。自动分配的公网 IPv4 不能转换为 EIP；停止实例后再启动通常会分配新 IP。测量仅反映配置探测点和测量时刻的网络表现，不能保证业务可达性或未来表现。
 
 本工具（仓库 `aws-crossborder-instance-selector`，Python 包 `crossborder_selector`）实现这一流程，并保留姊妹项目 `clean-ip-selection` 中的 IP 信誉预筛能力。
 
 目标：
 
 - 一条命令在指定 Region 多轮启动候选 EC2，从大陆视角拨测，自动保留全局 Top-K 实例。
-- 拨测数据源可插拔，默认零外部依赖，不依赖阿里云、腾讯云等国内云厂商服务。
+- 拨测数据源可插拔，默认无需外部探测账户，但仍依赖 AWS、公共探测和信誉服务，不依赖阿里云、腾讯云等国内云厂商服务。
 - 任一黑名单命中的 IP 直接淘汰。
 - 输出 JSON、Markdown、CSV 三种报告，并记录候选 IP 所属 AWS prefix 的历史统计。
 - 所有临时资源按 run-id 打标签，可一键清理；胜出实例不受清理影响。
@@ -39,7 +41,7 @@ select
  │         reverse    候选机经 SSM 对三网目标 ping + tcping     默认开启
  │         globalping 从 HK/TW 公共探针打候选 IP                  默认开启
  │         ripeatlas  从大陆在线探针 ping 候选 IP                 配置 API key 后开启
- │         itdog      三网家宽视角 ping/tcping 候选 IP            显式开启才用
+ │         itdog      配置的运营商节点 ping 候选 IP            显式开启才用
  │    ⑤ 打分 → 与在位 winner 合并 → 全局 Top-K 保留，其余终止
  │    ⑥ best_score >= target_score 或 round == max_rounds → 停止
  ├─ winner 处理：删除 crossborder-run-id 标签；打 crossborder-winner=true、
@@ -50,7 +52,7 @@ select
 
 ### 成本量级
 
-香港 t3.nano 加公网 IPv4 每台每小时约 0.012 美元。每轮候选机存活 5～8 分钟。20 台 × 3 轮总成本低于 0.5 美元。胜出实例长期运行按机型正常计费，公网 IPv4 每小时 0.005 美元。
+初始方案使用固定运行时长和价格估算，现已改为按探测配置提供规划范围。当前费用范围和未计入项目见 README；保留实例继续计费。
 
 ## 3. 仓库结构
 

@@ -54,3 +54,11 @@ def test_unknown_enable_backend_rejected():
 
 def test_known_backends_constant():
     assert KNOWN_BACKENDS == ("reverse", "globalping", "ripeatlas", "itdog")
+
+
+def test_final_retention_can_exceed_five_but_not_total_candidates():
+    assert load_config(overrides={"batch_size": 10, "max_rounds": 5, "keep_top_k": 50}).keep_top_k == 50
+    with pytest.raises(ValueError):
+        load_config(overrides={"batch_size": 50, "max_rounds": 2, "keep_top_k": 51})
+    with pytest.raises(ValueError, match="最终保留数量"):
+        load_config(overrides={"batch_size": 2, "max_rounds": 2, "keep_top_k": 5})

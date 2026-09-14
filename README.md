@@ -1,220 +1,193 @@
 # aws-crossborder-instance-selector
 
-在 AWS 上批量启动候选 EC2，从中国大陆视角拨测其公网 IPv4，保留跨境质量最优的实例。
+在指定 AWS 区域批量创建临时 EC2 实例，查询其公网 IPv4 的信誉名单记录，并执行网络探测。工具按本次测量结果计算得分，保留排名靠前的实例并终止其余实例。
 
-![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
-![AWS](https://img.shields.io/badge/AWS-EC2%20%C2%B7%20SSM%20%C2%B7%20IAM-FF9900?logo=amazonaws&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-128%20passed-2EA043)
-![No LLM](https://img.shields.io/badge/runtime-no%20AI%20model-555555)
-
-> AWS 没有"跨境优选 IP"服务。EC2 自动分配的公网 IPv4 无法转成 EIP，EIP 分配器会反复返回同一地址，且每 Region 仅 5 个配额。本工具改为筛选实例本身：多轮启动临时 EC2，拨测其公网 IP，保留胜出实例、终止其余。胜出实例持续运行期间 IP 保持不变（reboot 保留 IP，stop/start 会更换）。
-
-## 目录
-
-- [快速开始](#快速开始)
-- [Web 向导](#web-向导)
-- [工作原理](#工作原理)
-- [拨测数据源](#拨测数据源)
-- [打分规则](#打分规则)
-- [配置](#配置)
-- [前置条件](#前置条件)
-- [成本](#成本)
-- [Winner 注意事项](#winner-注意事项)
-- [安全边界](#安全边界)
-- [测试](#测试)
-- [Claude Code skill 与报告查看页](#claude-code-skill-与报告查看页)
-- [项目结构](#项目结构)
-- [局限与非目标](#局限与非目标)
-- [文档](#文档)
+结果用于比较本次候选，不代表长期网络质量、带宽或业务可用性。默认反向探测从 EC2 发往中国大陆目标，Globalping 从香港、台湾发往 EC2；这两种测量都不等同于中国大陆终端发起的业务访问。
 
 ## 快速开始
 
-```bash
-git clone <this-repo> && cd aws-crossborder-instance-selector
-python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
-pytest -q                                                   # 128 passed，不访问网络、不需凭证
-
-scripts/find_best_instance.sh ap-east-1 2 1 1 --dry-run     # 只打印计划，不创建资源
-scripts/find_best_instance.sh ap-east-1 2 1 1               # 冒烟：2 台、1 轮，约 5～8 分钟
-scripts/find_best_instance.sh ap-east-1 20 3 1 --protect    # 正式：每轮 20 台、最多 3 轮、保留 1 台
-
-scripts/start_web.sh                                        # 本地 Web 向导，默认 http://127.0.0.1:8765
-scripts/start_web.sh --demo                                 # Web 向导演示模式，不接触 AWS
-```
-
-位置参数依次为 Region、每轮候选数、最大轮次、保留数；其后可追加任意 CLI 参数，例如 `--protect`、`--enable-backend itdog`。不想记 CLI 参数时改用本地 [Web 向导](#web-向导)。
-
-命令输出的第一行是 `run-id: xb-...`。清理和重生成报告都依赖它：
+需要 Python 3.11 或更新版本。真实运行还需要本机 AWS 凭证及相应权限。
 
 ```bash
-python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
-python -m crossborder_selector.cli report  --run-id <run-id> --output-dir ./out
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+pytest
+
+# 仅查看计划，不调用 AWS API
+scripts/find_best_instance.sh ap-east-1 2 1 1 --dry-run
+
+# 本地模拟向导，不操作 AWS
+scripts/start_web.sh --demo
+
+# 真实运行：创建最多 2 台实例，测量 1 轮，保留 1 台
+scripts/find_best_instance.sh ap-east-1 2 1 1
+
+# 真实 Web 向导
+scripts/start_web.sh
 ```
 
-## Web 向导
+位置参数依次为区域、每轮候选数、最大轮次和保留数；额外选项写在这四个参数之后。真实运行会产生费用，保留实例会继续运行。
 
-不想记 CLI 参数时，用本地 Web 向导按步骤完成同一套选机流程。
+完整操作说明见 [MANUAL.md](MANUAL.md)，验证方法见 [TESTING.md](TESTING.md)。
 
-```bash
-scripts/start_web.sh                              # 默认 http://127.0.0.1:8765，自动打开浏览器
-scripts/start_web.sh --demo                       # 演示模式：模拟数据走完整流程，不接触 AWS
-scripts/start_web.sh --port 8792 --no-browser     # 换端口、不自动打开浏览器
-```
+## 工作流程
 
-也可直接运行 `python -m crossborder_selector.web [--host --port --output-dir --config --demo --no-browser --allow-remote]`。默认只监听 127.0.0.1；`--host` 指定非回环地址时必须同时加 `--allow-remote`（服务无认证，风险自负），否则退出码 2。
+1. 读取配置，准备子网、安全组、SSM 实例配置和 Amazon Linux 2023 AMI。
+2. 启动候选实例，为每台实例写入本次运行 ID 和轮次标签。
+3. 查询 IP 信誉名单；命中名单的实例被排除，查询失败记录为未知状态。
+4. 等待 SSM 注册，执行已启用的探测源。
+5. 计算评分，将本轮候选与上一轮保留实例一起排序，保留前 K 台。
+6. 达到最多轮次，或最高分达到目标值且保留数量已满足后，为保留实例写入 `crossborder-winner=true`。
+7. 输出 JSON、Markdown 和 CSV 报告，以及 IP 网段历史统计。
 
-向导分六步：
+候选实例的生命周期由本地进程管理。网络阻塞、进程强制退出或 AWS 清理请求失败可能留下实例；应记录终端输出的 `run-id`，通过清理命令核查。
 
-1. 环境检查：读取本机凭证身份、默认 VPC、vCPU 配额与该 Region 已有 winner；有阻断问题时禁止进入下一步。
-2. 配置参数：选择机型、每轮候选数、轮次、保留数、探测 backend 与 protect，右侧实时给出成本与时长估算。
-3. 确认计划：展示 dry-run 文本与估算，确认后才启动实例并产生费用。
-4. 运行中：进度条、实时日志、每轮候选/否决/保留经 Server-Sent Events 推送，可随时取消。
-5. 结果与选机：并排展示保留候选的综合分与三网分，从中选定一台出口机，其余可一并终止。
-6. 完成：显示选定实例、标签与接入建议，提供 report.json/md/csv 下载。
+## 探测源与网络要求
 
-演示模式（`--demo`）不调用任何 AWS API，用模拟数据按真实事件顺序走完六步，并写出真实格式的报告文件到 `out/`，适合无凭证环境向客户演示。
+| 配置名 | 测量方式 | 默认状态 | 限制 |
+|---|---|---|---|
+| `reverse` | EC2 经 SSM 向配置中的大陆目标执行 ICMP ping 和 TCP 连接测试 | 启用 | 目标是有限的公共地址和域名，不代表运营商全部网络或住宅宽带 |
+| `globalping` | 香港、台湾公共探针向候选 IP 发送 ping | 启用 | 不测量大陆终端访问；服务限额以提供方当前规则为准 |
+| `ripeatlas` | RIPE Atlas 在中国大陆的探针向候选 IP 发送 ping | 关闭 | 需 API key、credits 和可用探针；需显式启用 |
+| `itdog` | 配置中的公共节点向候选 IP 发送 ping | 关闭 | 非官方接口；节点 ID 与运营商映射需要维护，未验证节点为住宅宽带 |
 
-服务只监听 127.0.0.1 回环地址，使用本机 AWS 凭证，不做登录认证，仅供本机单人使用。
+仅启用反向探测时，工具使用无探测入站规则的 `crossborder-selector-sg`。启用任一外部探测源时，使用独立的 `crossborder-selector-ping-sg`，允许来自 `0.0.0.0/0` 的 IPv4 ICMP Echo Request（类型 8、代码 0），不开放 TCP/UDP 端口。公共探针地址会变化，因此此处不按固定探针 IP 限制来源。
 
-## 工作原理
+安全组会跨运行复用，保留实例继续使用原安全组；清理实例不会自动撤销共享规则。显式指定安全组时，工具只验证其 VPC 和探测入站条件，不自动修改用户指定的组。外部探测条件不满足时，在启动实例前报错。网络 ACL、路由和目标自身行为仍可能影响结果。
 
-```mermaid
-flowchart TD
-    A[准备基础设施<br/>默认 VPC · 无入站 SG · SSM instance profile] --> B[第 n 轮：启动 batch_size 台候选 EC2<br/>AL2023 · 自动公网 IPv4 · run-id 标签]
-    B --> C[等待 running 与 SSM online<br/>读取公网 IP · 归类 prefix]
-    C --> D{信誉预筛<br/>DNSBL / badlist / AbuseIPDB}
-    D -- 命中 --> X[立即终止]
-    D -- 通过 --> E[并行拨测<br/>reverse · globalping · ripeatlas · itdog]
-    E --> F[打分 · 与在位 winner 合并<br/>全局 Top-K 保留，其余终止]
-    F --> G{best ≥ target_score<br/>或 轮次用尽？}
-    G -- 否 --> B
-    G -- 是 --> H[winner：移除 run-id 标签<br/>打 crossborder-winner 标签 · 关机行为设为 stop]
-    H --> I[输出 report.json / report.md / candidates.csv<br/>追加 history/prefix_stats.json]
-```
+`reverse.targets` 支持 `host` 或 `host:port`。ICMP 使用 host；TCP 使用显式端口或 `tcping_port`。示例中的 DNS 地址显式使用 53 端口。ICMP 显示平均往返时延；TCP 显示平均连接耗时，包含名称解析和本机执行开销。
 
-每轮候选机的存活时间约 5～8 分钟。所有候选机都带 `crossborder-run-id=<run-id>` 标签，任何异常路径都会终止非 winner 实例，遗漏的可用 `cleanup --run-id` 收尾。
+## 评分与检查状态
 
-## 拨测数据源
+每个样本得分为 `100 × (1 − 丢包率) × 延迟因子`。延迟因子在 `lat_good_ms` 和 `lat_bad_ms` 之间线性递减。同一探测源内先合并运营商样本，再按探测源权重计算综合分。只有返回有效测量数据的探测源参与权重归一化；不同覆盖范围下的得分应结合明细比较。
 
-| backend | 视角 | 默认 | 需要 key | 局限 |
-|---|---|:---:|:---:|---|
-| `reverse` | 候选机经 SSM 向大陆三网目标 ping + tcping（出境路径近似） | 开 | 否 | 探测对象是运营商机房而非家宽；ICMP 可能被限速 |
-| `globalping` | HK/TW 公共探针 → 候选 IP | 开 | 否 | 无中国大陆探针，只反映港台质量；匿名额度约 250 tests/h，配置 `api_token` 后约 500 tests/h |
-| `ripeatlas` | RIPE Atlas 大陆在线探针 → 候选 IP | 关 | 是 | 大陆在线探针数量少；one-off 结果通常需要数分钟 |
-| `itdog` | itdog.cn 三网家宽节点 → 候选 IP（仅 ping） | 关 | 否 | 非官方接口，可能随时失效；失败只降级不阻塞 |
+以下情况会排除候选：
 
-`reverse.targets` 每项可写 `host` 或 `host:port`。ping 只用 host 部分；tcping 用条目端口，未给端口则回退到 `tcping_port`。默认目标里的纯 IP 是运营商公共 DNS，走 53 端口；域名走 `tcping_port`（443）。
+- 未分配公网 IP，或命中所查询的信誉名单。
+- 已启用反向探测，但该探测失败、未覆盖全部配置运营商，或所有目标均未响应。
+- 有效探测源少于 `min_backends`。
+- 所有有效测量均没有成功响应。
 
-## 打分规则
+完成但全部丢包的测量仍用于显示丢包数据，不会单独证明实例可用。排序依据为合格状态、综合分、反向探测分。IP 网段仅用于统计，不参与排序。
 
-1. **硬否决**（任一成立即淘汰）：信誉命中；`reverse` 三网全部丢包；有效 backend 数少于 `min_backends`；未分配公网 IP。
-2. **子分**：每个探针样本 `100 × (1 − 丢包率) × 延迟因子`。延迟因子在 `lat_good_ms`（满分）与 `lat_bad_ms`（零分）之间线性递减。
-3. **合成**：同一 backend 内先按 `weights.isps` 合并三网分；composite 再按 `weights.backends` 加权，只对返回有效数据的 backend 归一化权重，缺失 backend 不计零分。
-4. **排序**：`(qualified, composite, reverse 分)` 降序。prefix 只记录，不参与打分。
+信誉检查状态为 `clear`（所查名单未命中）、`listed`（命中）或 `unknown`（检查未完成）。查询失败时不提供完整信誉分。GitHub 名单检查失败默认排除候选（`reputation.require_badlist: true`）；其他信誉源失败仍记录为未知；“未命中”不是 IP 无风险或业务平台可接受该 IP 的保证。
 
 ## 配置
 
-复制 `config.example.yaml` 为 `config.yaml` 后修改。包装脚本会在文件存在时自动传入 `--config`；直接调用 `python -m crossborder_selector.cli` 时，未指定 `--config` 且当前目录存在 `config.yaml` 也会自动读取并打印 `using config.yaml`。
+```bash
+cp config.example.yaml config.yaml
+```
 
-| 键 | 默认值 | 说明 |
+CLI 和 Web 服务自动读取当前目录中的 `config.yaml`，也可用 `--config` 指定文件。
+
+| 配置 | 默认值 | 说明 |
 |---|---|---|
-| `region` / `instance_type` | `ap-east-1` / `t3.nano` | 目标 Region 与候选机机型 |
-| `batch_size` / `max_rounds` / `keep_top_k` | `10` / `3` / `1` | 每轮候选数、最大轮次、保留数 |
-| `target_score` | `90` | 达到即提前停止 |
-| `min_backends` | `1` | 有效 backend 少于此值即不合格 |
-| `protect` | `false` | 对 winner 开启 `DisableApiStop` 与 `DisableApiTermination` |
-| `backends.*.enabled` | reverse/globalping 开，ripeatlas/itdog 关 | 也可用 `--enable-backend` / `--disable-backend` 覆盖 |
-| `weights.backends` | reverse .5 · globalping .2 · ripeatlas .15 · itdog .15 | backend 权重 |
-| `weights.isps` | telecom .34 · unicom .33 · mobile .33 | 三网权重 |
-| `weights.lat_good_ms` / `lat_bad_ms` | `60` / `300` | 延迟因子端点 |
-| `subnet_id` / `security_group_id` / `instance_profile_name` | 空 | 空则使用默认 VPC 并自动创建、复用固定名称资源 |
+| `region` / `instance_type` | `ap-east-1` / `t3.nano` | 区域和机型 |
+| `batch_size` / `max_rounds` / `keep_top_k` | `10` / `3` / `1` | 每轮数量 1–50、轮次 1–10、保留数 1–50；保留数不能超过计划启动总数 |
+| `target_score` | `90` | 最高综合分达到此值可提前停止 |
+| `min_backends` | `1` | 有效探测源的最低数量，不得超过实际可用的已启用源数量 |
+| `protect` | `false` | CLI 在筛选结束后、Web 在人工选定后启用停止和终止保护 |
+| `weights.backends` | reverse .5 / globalping .2 / ripeatlas .15 / itdog .15 | 非负权重；已启用源须有正权重 |
+| `weights.isps` | 电信 .34 / 联通 .33 / 移动 .33 | 非负权重，总和须大于 0 |
+| `weights.lat_good_ms` / `lat_bad_ms` | `60` / `300` | 延迟因子的端点 |
+| `subnet_id` / `security_group_id` / `instance_profile_name` | 空 | 未提供时准备或复用工具管理的资源 |
 
-密钥字段（`ripeatlas.api_key`、`globalping.api_token`、`reputation.abuseipdb_api_key`）不会写入报告。
+RIPE Atlas 需要同时设置 `backends.ripeatlas.enabled: true` 和 `api_key`。也可通过 `--enable-backend ripeatlas` 启用。密钥字段及已知密钥在探测错误中的值会在报告和 Web 运行日志中脱敏。
 
-## 前置条件
-
-- 目标 Region 存在默认 VPC；没有时在 `config.yaml` 指定 `subnet_id` 与 `security_group_id`。
-- 该 Region vCPU 配额不少于 `batch_size × 2`。
-- AWS 凭证具备下列权限。
-
-<details>
-<summary>IAM action 清单</summary>
-
-日常运行：`ec2:RunInstances`、`ec2:Describe*`、`ec2:TerminateInstances`、`ec2:CreateTags`、`ec2:DeleteTags`、`ec2:CreateSecurityGroup`、`ec2:ModifyInstanceAttribute`、`iam:CreateRole`、`iam:AttachRolePolicy`、`iam:CreateInstanceProfile`、`iam:AddRoleToInstanceProfile`、`iam:TagRole`、`iam:TagInstanceProfile`、`iam:PassRole`、`iam:Get*`、`ssm:SendCommand`、`ssm:GetCommandInvocation`、`ssm:DescribeInstanceInformation`、`ssm:GetParameters`。
-
-仅 `cleanup --include-infra` 需要：`ec2:DeleteSecurityGroup`、`iam:RemoveRoleFromInstanceProfile`、`iam:DeleteInstanceProfile`、`iam:DetachRolePolicy`、`iam:DeleteRole`。
-
-</details>
-
-## 成本
-
-香港 `t3.nano` 加公网 IPv4 每台每小时约 0.012 美元。每轮候选机存活 5～8 分钟，20 台 × 3 轮总成本低于 0.5 美元。胜出实例长期运行按机型计费，公网 IPv4 每小时 0.005 美元。
-
-## Winner 注意事项
-
-- **不要 stop 该实例。** stop/start 会更换公网 IP，reboot 不会。
-- winner 的 `InstanceInitiatedShutdownBehavior` 已改为 `stop`，在 OS 内执行 `shutdown` 只会停机，不会终止实例。
-- 标签：`crossborder-winner=true`、`crossborder-score`、`crossborder-round`、`crossborder-selected-at`。胜出时 `crossborder-run-id` 标签被移除，因此 `cleanup --run-id` 不会影响它。
-- `--protect` 开启的保护可手动解除：
-
-  ```bash
-  aws ec2 modify-instance-attribute --instance-id <id> --no-disable-api-termination
-  aws ec2 modify-instance-attribute --instance-id <id> --no-disable-api-stop
-  ```
-
-## 安全边界
-
-- 安全组 `crossborder-selector-sg` 没有任何入站规则；候选机不开放端口、不配置 SSH。
-- 不向候选机注入 AWS 凭证。探测脚本经 SSM 下发，只执行 ping 和 tcping。
-- 所有候选机按 `crossborder-run-id` 隔离，`cleanup --run-id` 只影响本次 run。`cleanup --include-infra` 在存在 winner 时会拒绝删除共享资源。
-
-## 测试
+## Web 向导
 
 ```bash
-. .venv/bin/activate && pytest -q      # 128 passed
+scripts/start_web.sh --port 8765
+scripts/start_web.sh --demo --no-browser
 ```
 
-单元测试不访问网络：AWS 用 moto，SSM 与四个探测 backend 用注入的假 transport。dry-run 验证、真实冒烟、清理与中断恢复的完整步骤见 [TESTING.md](TESTING.md)。
+向导提供配置、确认、运行和结果四个阶段，日志和诊断默认折叠。区域列表包含 SDK 已知区域和 AWS 返回的区域，并支持手动输入区域代号；账户未启用的区域及其他分区需要对应账户权限与凭证。机型名称来自 AWS 完整分页结果，选中后查询 CPU、内存和架构；指定子网后按其可用区筛选。查询过程中显示加载状态，失败后可重新加载，同一区域和子网已有的结果会标明为上次查询结果。默认子网也会选择支持该机型的可用区。机型列表不承诺实时容量。
 
-## Claude Code skill 与报告查看页
+每轮启动数量可以配置为 1–50 台，轮次为 1–10；启动 API 要求完整数量，容量不足不会静默创建更少实例。配额检查按所选机型的真实 vCPU 和对应 On-Demand 配额组计算，排除 Spot，用量包含跨轮保留实例。配额无法读取或已有实例规格无法确认时，不应把页面上的未知值当作可用额度保证。
 
-| 文件 | 用途 |
-|---|---|
-| `.claude/skills/crossborder-select/SKILL.md` | Claude Code 项目级 skill。在本仓库目录打开 Claude Code 后，对它说"帮我找一台跨境质量好的 EC2"即可触发：它会执行 dry-run、select、读取报告并说明结果，中断时执行 cleanup。复制到 `~/.claude/skills/` 可全局使用。 |
-| `ui/report-viewer.html` | 单文件报告查看页，浏览器直接打开。载入 `out/<run-id>/report.json` 或 `candidates.csv`，显示 winner、每轮结果、全部候选与 prefix 统计，并提供运行命令构造器。文件只在本地解析，不上传数据。 |
+默认监听 `127.0.0.1`。使用 `--host <address> --allow-remote` 可以启用远程访问；服务没有身份认证，可访问端口的用户能够操作实例，需要限制网络来源。POST 请求验证协议、主机和端口一致的 Origin；这不是身份认证。
 
-## 项目结构
+取消会请求在当前轮结束后停止，保留已测实例。关闭浏览器不停止服务；关闭服务进程则可能留下实例。重启后，未完成记录显示“状态未知”，可按该运行 ID 查询并清理临时候选。
 
-```
-crossborder_selector/
-├── cli.py            select / cleanup / report 子命令
-├── config.py         默认值、深合并、校验
-├── orchestrator.py   多轮锦标赛：启动 → 预筛 → 拨测 → 保留 Top-K → 终止其余
-├── scoring.py        子分、合成、硬否决、排序
-├── report.py         JSON / Markdown / CSV 与 prefix 历史
-├── aws/              ec2.py · infra.py · ssm.py · ipranges.py
-├── probes/           base.py · reverse.py · globalping.py · ripeatlas.py · itdog.py
-├── reputation/       dnsbl.py · badlist.py · abuseipdb.py
-└── web/              __main__.py · server.py · api.py · runs.py · demo.py · pricing.py · static/index.html
-scripts/find_best_instance.sh   一条命令入口
-scripts/start_web.sh            本地 Web 向导入口
-ui/report-viewer.html           报告查看页
-.claude/skills/crossborder-select/SKILL.md
-tests/                          pytest，moto + 假 transport
-docs/superpowers/               设计 spec 与实施计划
+## 镜像与系统盘
+
+开始页的“添加机型”支持多行配置，例如 `t3.nano × 2` 和 `t4g.nano × 3`。每行设置“每轮启动台数”，页面自动显示每轮总数；“最终希望保留”独立设置所有机型合计的保留目标。每轮最多 50 台，保留数为 1–50 台且不能超过计划启动总数。未凑够保留数量时，即使已有候选达到评分目标，也会继续下一轮，直到数量满足或达到最多轮次；合格候选不足时最终数量可能少于目标。调整某行数量或移除机型时，其他机型的逐台配置保持对应。
+
+API 和配置文件使用 `instance_groups: [{instance_type: t3.nano, count: 2}, {instance_type: t4g.nano, count: 3}]`。非空清单决定 `batch_size` 和实际各机型数量；空清单保留原 `instance_type` + `batch_size` 用法。配额按对应的 vCPU 配额组汇总，并为跨轮可能保留的最大 vCPU 用量预留空间。默认 VPC 中允许为不同机型选择不同可用区的子网；指定子网时，每一种机型都必须在该可用区提供。
+
+页面提供 Amazon Linux 2023、Ubuntu 24.04 LTS 和 Ubuntu 22.04 LTS 选项，按当前区域和机型架构查询实际 AMI，也可手动输入 AMI ID。切换区域或架构后，已选系统会重新解析；无法获取时提示重新选择，不自动换成其他系统。根卷容量、卷类型和加密可配置；“逐台设置”可覆盖每轮指定序号候选的镜像、容量和卷类型。配置文件示例：
+
+```yaml
+image_id: ''                 # 自动匹配架构的 Amazon Linux 2023
+root_volume_size_gib: 20
+root_volume_type: gp3        # gp3、gp2、standard
+root_volume_encrypted: true
+instance_overrides:
+  - {}                      # 第 1 台继承默认值
+  - image_id: ami-0123456789abcdef0  # 替换为当前区域可用的 AMI
+    root_volume_size_gib: 40
 ```
 
-## 局限与非目标
+启动前验证 AMI 可见性、状态、架构和 EBS 根卷最小大小，并使用镜像实际根设备名。根卷随实例终止删除；没有覆盖的其他镜像设备映射遵循 AMI 本身的设置。自定义 Linux 镜像需有可用的 SSM Agent；Windows 镜像不能执行当前反向探测脚本。需要 Dedicated Host 等额外启动参数的机型，仍需要相应部署条件；当前工具没有专用主机配置项。
 
-- 不做 EIP 筛选，姊妹项目 `clean-ip-selection` 已覆盖。
-- 不做长期监控与自动换机。
-- 不做基于 prefix 历史的自动跳过，只记录统计。
-- 不接入需要付费或国内云账号的拨测 API。
+不同配置分组启动。后续分组失败时，工具尝试终止本轮之前已创建的实例，保留运行标签以支持清理。JSON 报告记录每个候选实际下发的镜像和根卷设置。
 
-## 文档
+混合 ARM 和 x86 机型时，可用 `image_preset: ubuntu2404` 按每台架构解析镜像，也可在 `instance_overrides` 中逐台指定 `image_preset` 或 `image_id`。手工填写的同一 AMI 不会自动转换架构；不兼容时在启动前报错。完整例子见 [mixed-launch.json](examples/mixed-launch.json)。
 
-| 文档 | 内容 |
-|---|---|
-| [MANUAL.md](MANUAL.md) | 按操作顺序的运维手册：安装、配置、dry-run、冒烟、正式运行、可选 backend、清理、故障排查、交付生产、用 Web 向导运行 |
-| [TESTING.md](TESTING.md) | 单元测试、dry-run、真实冒烟、脚本语法检查、清理与中断恢复验证、Web 向导冒烟 |
-| [docs/superpowers/specs/](docs/superpowers/specs/) | 设计 spec（架构、配置、打分、错误处理） |
+## Python 与 Skill
+
+[Python 使用方法](docs/python-api.md) 提供标准库 API 客户端、镜像查询、逐台配置和启动示例：
+
+```bash
+python3 examples/api_client.py images --region ap-east-1 --instance-type t4g.nano
+python3 examples/api_client.py plan --config-json examples/launch.json
+```
+
+无参数运行脚本默认查看计划。实际启动使用 `start --execute`。可复用的 [crossborder-select Skill](.claude/skills/crossborder-select/SKILL.md) 包含 Python、Web、CLI 工作流程和资源状态处理说明。
+
+## GitHub IP 名单
+
+默认查询 [nginx-ultimate-bad-bot-blocker 的 IP 名单](https://github.com/mitchellkrogza/nginx-ultimate-bad-bot-blocker/blob/master/_generator_lists/bad-ip-addresses.list)。该仓库维护拦截名单，命中只代表该维护者的分类。
+
+可在高级设置或 `reputation.badlist_url` 指定 HTTPS 原始文本文件。支持 IP、CIDR、注释和 IP 后的空白分隔字段。每次运行加载一次；空文件、HTML 网页、无效条目和下载失败都记录为错误。默认 `require_badlist: true` 排除检查失败的候选；成功检查后，命中即排除。结果卡片显示 GitHub 名单状态，JSON 明细保留源地址及命中项。
+
+## 资源归属与清理
+
+```bash
+.venv/bin/python -m crossborder_selector.cli cleanup --region <region> --run-id <run-id>
+```
+
+新版本保留实例上的 `crossborder-run-id`，用 `crossborder-winner=true` 标记保留状态。清理按运行归属查询，并排除已标记为保留的实例；旧版本保留实例的 `crossborder-source-run` 标签也可被识别。
+
+`--include-infra` 只额外删除当前区域的工具受管安全组，共享 IAM 角色和实例配置默认保留。删除账户级 IAM 资源需再加 `--include-iam`；工具检查所有权、其他实例配置及所有已启用区域中的实例依赖。任何依赖查询失败都会停止 IAM 删除。清理共享资源期间应停止发起新的筛选运行。
+
+Web 的“终止其余保留候选”用于清理人工选定后不再需要的保留实例，并持久化操作结果。它与普通 `cleanup --run-id` 的范围不同。
+
+## 运行前提与权限
+
+目标区域需要可用子网和出网路径。没有默认 VPC 时指定 `subnet_id`；安全组可显式提供或由工具准备。vCPU 配额应覆盖已有实例、本轮候选和上一轮保留实例，不能只按候选数量计算。
+
+日常操作涉及：`ec2:RunInstances`、`ec2:Describe*`、`ec2:TerminateInstances`、`ec2:CreateTags`、`ec2:CreateSecurityGroup`、`ec2:AuthorizeSecurityGroupIngress`、`ec2:ModifyInstanceAttribute`、`iam:CreateRole`、`iam:AttachRolePolicy`、`iam:CreateInstanceProfile`、`iam:AddRoleToInstanceProfile`、`iam:TagRole`、`iam:TagInstanceProfile`、`iam:PassRole`、`iam:Get*`、`ssm:SendCommand`、`ssm:GetCommandInvocation`、`ssm:DescribeInstanceInformation`、`ssm:GetParameters`。Web 检查还使用 STS 身份查询、`servicequotas:GetServiceQuota` 和 `servicequotas:ListServiceQuotas`。
+
+安全组清理需要 `ec2:DeleteSecurityGroup`。账户级 IAM 清理还需要 `ec2:DescribeRegions`、各区域的 `ec2:DescribeInstances`、`iam:ListInstanceProfilesForRole`、`iam:RemoveRoleFromInstanceProfile`、`iam:DeleteInstanceProfile`、`iam:DetachRolePolicy`、`iam:DeleteRole`。这是一份调用清单，授权策略的资源范围需按账户配置。
+
+工具不复制操作者的长期密钥到实例。实例通过关联的 IAM 角色取得 SSM 所需的临时凭证。
+
+## 费用与保留实例
+
+Web 展示基于候选数量、启用探测源、超时配置和跨轮保留时间的规划范围，不是运行时长上限。香港已列机型使用项目内静态参考价，未实时核价；其他区域或未知机型不套用香港价格。
+
+显示的费用只包括 EC2 和公网 IPv4 参考费用，未包含 EBS 根卷、流量和最终保留实例的后续费用。实际费用以所用区域、机型和运行时间为准。
+
+保留实例仍是普通 EC2 实例。stop/start 会更换自动分配的公网 IPv4，reboot 通常保留该地址。实例内发起关机的行为设为 stop。API 停止和终止保护不阻止操作系统内关机；设置失败会明确报错。
+
+工具不安装代理或业务软件。部署应用、开放服务端口、访问控制及长期监控需另行配置。
+
+## 报告与项目结构
+
+`out/<run-id>/report.json` 保存测量快照、评分、信誉状态、探测样本及错误；`report.md` 用于阅读，`candidates.csv` 用于表格分析。`selection.json` 保存 Web 后续选定和终止操作，界面据此更新资源状态。报告本身不代表当前 AWS 实例状态。
+
+`ui/report-viewer.html` 可在浏览器本地载入 JSON 或 CSV。CSV 不包含完整探测明细，诊断应使用 JSON。`.claude/skills/crossborder-select/SKILL.md` 提供 Claude Code 的命令调用说明。
+
+实现入口：`cli.py`（命令行）、`orchestrator.py`（多轮筛选）、`scoring.py`（评分）、`aws/`（资源与 SSM）、`probes/`（探测源）、`reputation/`（名单检查）、`report.py`（报告）、`web/`（向导）。`docs/superpowers/` 保存历史设计和实施记录，当前行为以代码及本 README、操作手册为准。

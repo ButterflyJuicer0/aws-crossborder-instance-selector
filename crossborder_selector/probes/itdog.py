@@ -55,10 +55,13 @@ class ItdogBackend(ProbeBackend):
         headers = {"User-Agent": UA, "Referer": BATCH_PING_URL,
                    "Content-Type": "application/x-www-form-urlencoded"}
         data = {"host": "\r\n".join(ips), "node_id": ",".join(self.nodes), "cidr_filter": "true", "gateway": "last"}
-        resp = self.session.post(BATCH_PING_URL, headers=headers, data=data)
+        timeout = (min(10, self.cfg["timeout_s"]), self.cfg["timeout_s"])
+        resp = self.session.post(BATCH_PING_URL, headers=headers, data=data, timeout=timeout)
+        resp.raise_for_status()
         if "guardret" not in self.session.cookies and "guard" in self.session.cookies:
             self.session.cookies["guardret"] = generate_guardret(self.session.cookies["guard"])
-            resp = self.session.post(BATCH_PING_URL, headers=headers, data=data)
+            resp = self.session.post(BATCH_PING_URL, headers=headers, data=data, timeout=timeout)
+            resp.raise_for_status()
         return parse_page(resp.text)
 
     def _collect(self, wss_url, task_id, ips) -> dict:
@@ -72,7 +75,9 @@ class ItdogBackend(ProbeBackend):
                     break
                 try:
                     msg = json.loads(ws.recv(timeout=min(2.0, remaining)))
-                except Exception:  # 超时、连接被服务端关闭（ConnectionClosed）或非法 JSON 都视为流结束，保留已收到的样本
+                except TimeoutError:
+                    continue  # 短暂空闲不代表测量结束；等待到整体截止时间。
+                except Exception:  # 连接关闭或非法 JSON：保留此前收到的样本。
                     break
                 if msg.get("type") == "finished":
                     break

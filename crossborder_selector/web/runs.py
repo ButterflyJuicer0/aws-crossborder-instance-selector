@@ -14,7 +14,7 @@ from crossborder_selector.cli import build_backends, new_run_id
 from crossborder_selector.orchestrator import Orchestrator, utc_now_iso
 from crossborder_selector.report import write_reports
 from crossborder_selector.reputation.abuseipdb import build_sources
-from crossborder_selector.web.api import redact
+from crossborder_selector.diagnostics import redact, secret_values
 
 MAX_DETAIL_EVENTS = 200
 
@@ -31,7 +31,7 @@ class RunRecord:
     stop_reason: str = ""
     winners: list = field(default_factory=list)
     report_paths: dict = field(default_factory=dict)
-    leftover_instance_ids: list = field(default_factory=list)
+    leftover_instance_ids: list | None = None
     error: str = ""
 
     def to_summary(self) -> dict:
@@ -51,6 +51,7 @@ class RunManager:
         self.history_file = history_file
         self.orchestrator_factory = orchestrator_factory or Orchestrator
         self._records, self._subs, self._flags = {}, {}, {}
+        self._secrets = {}
         self._lock = threading.Lock()
         os.makedirs(output_dir, exist_ok=True)
 
@@ -99,7 +100,7 @@ class RunManager:
                 self._subs[run_id].remove(q)
 
     def emit(self, run_id, event: dict):
-        event = dict(event)
+        event = redact(dict(event), self._secrets.get(run_id, []))
         event.setdefault("ts", self.clock())
         rec = self._records[run_id]
         with self._lock:
@@ -119,6 +120,8 @@ class RunManager:
     # ---------- 启动 / 取消 ----------
     def start(self, overrides: dict) -> str:
         cfg = self.api.load(overrides)
+        if hasattr(self.api, "preflight"):
+            self.api.preflight(cfg)
         run_id = new_run_id()
         # record.config 保留用户的 protect 选择（供 select 时默认勾选），但 Web 运行阶段不加固任何
         # 实例（加固只在 select 对选定实例执行）；history_file 若被注入则改写，避免污染仓库 history/。
@@ -127,6 +130,7 @@ class RunManager:
         if self.history_file:
             run_cfg = replace(run_cfg, history_file=self.history_file)
         self._records[run_id] = rec
+        self._secrets[run_id] = secret_values(asdict(cfg))
         self._flags[run_id] = threading.Event()
         self._persist(rec)
         threading.Thread(target=self._run, args=(rec, run_cfg), daemon=True, name=f"run-{run_id}").start()
@@ -138,7 +142,7 @@ class RunManager:
         if rec is None or flag is None or rec.state != "running":
             return False  # 只有仍在运行的 run 才能取消；已结束的返回 False（server 转 404）
         flag.set()
-        self.emit(run_id, {"type": "cancelled", "message": "已请求取消，当前轮结束后停止并保留在位 winner"})
+        self.emit(run_id, {"type": "cancelled", "message": "已请求取消，当前轮结束后停止，保留已选出的实例"})
         return True
 
     def _run(self, rec: RunRecord, cfg):
@@ -171,11 +175,13 @@ class RunManager:
             rec.state = "cancelled" if result.stop_reason == "cancelled" else "finished"
             self._persist(rec)
         except BaseException as e:  # 线程内任何失败都要落状态并带上遗留实例
-            rec.error, rec.finished_at = f"{type(e).__name__}: {e}", self.clock()
+            rec.error, rec.finished_at = redact(f"{type(e).__name__}: {e}", self._secrets.get(run_id, [])), self.clock()
             try:
-                rec.leftover_instance_ids = Ec2Manager(clients["ec2"]).list_run_instances(run_id) if clients else []
+                rec.leftover_instance_ids = Ec2Manager(clients["ec2"]).list_run_instances(run_id) if clients else None
+                if clients and not rec.winners:
+                    rec.winners = Ec2Manager(clients["ec2"]).list_run_winners(run_id)
             except Exception:
-                rec.leftover_instance_ids = []
+                rec.leftover_instance_ids = None
             # 同上：先落 failed 事件，再翻转 state，保证主线程读到终态时事件已就绪
             self.emit(run_id, {"type": "failed", "message": rec.error, "leftover_instance_ids": rec.leftover_instance_ids,
                                "winner_instance_ids": [w["instance_id"] for w in rec.winners]})

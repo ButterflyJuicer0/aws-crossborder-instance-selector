@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 一条命令选出跨境最优 EC2 实例。
+# 启动候选 EC2，按本次网络测量得分保留实例。
 # 用法: scripts/find_best_instance.sh <region> [batch=10] [rounds=3] [keep=1] [额外 cli 参数...]
 # 例:   scripts/find_best_instance.sh ap-east-1 20 3 1 --protect
 #       scripts/find_best_instance.sh ap-east-1 2 1 1 --dry-run

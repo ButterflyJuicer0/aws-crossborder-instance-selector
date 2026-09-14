@@ -10,9 +10,9 @@ def test_catalog_has_expected_types():
 def test_hourly_and_estimate():
     assert hourly_for("t3.nano") == 0.0066 and hourly_for("zz.huge") == 0.02
     e = estimate("t3.nano", 20, 3)
-    assert e["estimated_minutes"] == 24
-    assert e["estimated_cost_usd"] == round(20 * 3 * (0.0066 + IPV4_HOURLY_USD) * 8 / 60, 3)
-    assert "估算" in e["note"]
+    assert e["estimated_minutes_range"][1] > 60
+    assert e["estimated_cost_range_usd"][1] > e["estimated_cost_range_usd"][0] > 0
+    assert "未含 EBS" in e["note"]
 
 
 def test_regions_include_hk_first():

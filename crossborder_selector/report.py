@@ -1,4 +1,4 @@
-"""JSON / Markdown / CSV 报告与 prefix 历史。"""
+"""JSON / Markdown / CSV 报告与网段历史统计。"""
 import csv
 import json
 import os
@@ -6,25 +6,16 @@ from dataclasses import asdict
 from statistics import mean
 
 from crossborder_selector.config import ISPS
+from crossborder_selector.diagnostics import redact, secret_values
 
 BACKEND_ISP_COLUMNS = [("reverse", i) for i in ISPS] + [("globalping", "HK"), ("globalping", "TW")] + \
                       [("ripeatlas", i) for i in ISPS] + [("itdog", i) for i in ISPS]
-CSV_COLUMNS = ["run_id", "round", "instance_id", "public_ip", "prefix", "reputation_score", "veto_reason",
-               "composite", "qualified"] + [f"{b}_{i}" for b, i in BACKEND_ISP_COLUMNS] + ["kept", "terminated"]
-_SECRET_KEYS = {"api_key", "abuseipdb_api_key", "api_token"}
-
-
-def _redact(obj):
-    """报告里直接删除密钥字段，不保留键名。"""
-    if isinstance(obj, dict):
-        return {k: _redact(v) for k, v in obj.items() if k not in _SECRET_KEYS}
-    if isinstance(obj, list):
-        return [_redact(v) for v in obj]
-    return obj
+CSV_COLUMNS = ["run_id", "round", "instance_id", "instance_type", "public_ip", "prefix", "reputation_score", "veto_reason",
+               "composite", "qualified"] + [f"{b}_{i}" for b, i in BACKEND_ISP_COLUMNS] + ["kept", "terminated", "reputation_status"]
 
 
 def _raw_rtt(score, backend, isp):
-    """该 backend 对该 ISP 的原始 rtt 中位数均值（ms）；无数据 None。"""
+    """各目标平均时延的算术平均（ms）；无数据时返回 None。"""
     for pr in score.probe_results:
         if pr.backend == backend and pr.ok:
             vals = [p.median_rtt_ms for p in pr.probes if p.isp == isp and p.median_rtt_ms is not None]
@@ -42,6 +33,15 @@ def _row(run, s, kept_ids, terminated_ids):
     row["kept"] = c.instance_id in kept_ids
     row["terminated"] = c.instance_id in terminated_ids
     row["isp_scores"], row["backend_scores"] = s.isp_scores, s.backend_scores
+    row["image_id"], row["root_volume"], row["instance_type"] = c.image_id, c.root_volume, c.instance_type
+    row["reputation_status"] = s.reputation.status if s.reputation else "unknown"
+    row["reputation_results"] = [
+        {**asdict(result), "status": result.status} for result in s.reputation.results] if s.reputation else []
+    row["probe_results"] = [
+        {"backend": pr.backend, "ok": pr.ok, "error": pr.error,
+         "probes": [{"isp": p.isp, "sent": p.sent, "received": p.received, "loss": p.loss,
+                     "mean_rtt_ms": p.median_rtt_ms, "target": p.target, "method": p.method}
+                    for p in pr.probes]} for pr in s.probe_results]
     return row
 
 
@@ -56,42 +56,50 @@ def to_dict(run, cfg) -> dict:
             prefixes.setdefault(s.candidate.prefix, []).append(s.composite)
     prefix_stats = {p: {"samples": len(v), "mean_composite": round(mean(v), 2), "best_composite": max(v)}
                     for p, v in prefixes.items()}
-    return {
+    data = {
+        "schema_version": 2,
         "run_id": run.run_id, "region": run.region, "started_at": run.started_at, "finished_at": run.finished_at,
         "stop_reason": run.stop_reason, "rounds_completed": len(run.rounds),
-        "config": _redact(asdict(cfg)),
+        "config": asdict(cfg),
         "winners": [_row(run, w, kept_ids, terminated) for w in run.winners],
         "rounds": [{"round": r.round, "launched": len(r.launched), "vetoed": len(r.vetoed),
                     "scored": len(r.scored), "kept": [s.candidate.public_ip for s in r.kept],
                     "terminated": r.terminated, "backend_errors": r.backend_errors} for r in run.rounds],
         "candidates": rows, "prefixes": prefix_stats,
     }
+    return redact(data, secret_values(asdict(cfg)))
 
 
 def render_markdown(d: dict) -> str:
-    L = [f"# 跨境优选实例报告 {d['run_id']}", "",
-         f"- Region：{d['region']}", f"- 时间：{d['started_at']} → {d['finished_at']}",
-         f"- 轮数：{d['rounds_completed']}，停止原因：{d['stop_reason']}", "", "## Winners", ""]
+    L = [f"# EC2 网络测量与筛选报告 {d['run_id']}", "",
+         f"- 区域：{d['region']}", f"- 时间：{d['started_at']} → {d['finished_at']}",
+         f"- 轮数：{d['rounds_completed']}，停止原因：{d['stop_reason']}", "", "## 测量结束时保留的实例", ""]
     if d["winners"]:
-        L += ["| instance | public IP | prefix | composite | 电信 | 联通 | 移动 |", "|---|---|---|---|---|---|---|"]
+        L += ["| 实例 ID | 公网 IP | 网段（CIDR） | 综合分 | 电信 | 联通 | 移动 |", "|---|---|---|---|---|---|---|"]
         for w in d["winners"]:
             s = w["isp_scores"]
             L.append(f"| {w['instance_id']} | {w['public_ip']} | {w['prefix']} | {w['composite']} | "
                      f"{s.get('telecom', '-')} | {s.get('unicom', '-')} | {s.get('mobile', '-')} |")
         L += ["", "> **不要 stop 这些实例。** stop/start 会更换公网 IPv4；reboot 不会。",
-              "> 实例已移除 run-id 标签并打上 `crossborder-winner=true`，`cleanup` 不会终止它们。"]
+              "> 实例保留运行归属标签；`cleanup --run-id` 会排除带 `crossborder-winner=true` 的实例。"]
     else:
         L.append("本次没有合格候选。")
-    L += ["", "## 每轮概览", "", "| round | launched | vetoed | scored | kept | terminated | backend errors |", "|---|---|---|---|---|---|---|"]
+    L += ["", "## 每轮概览", "", "| 轮次 | 已启动 | 已排除 | 已评分 | 保留 IP | 已终止 | 探测源错误 |", "|---|---|---|---|---|---|---|"]
     for r in d["rounds"]:
         L.append(f"| {r['round']} | {r['launched']} | {r['vetoed']} | {r['scored']} | {', '.join(r['kept']) or '-'} | "
                  f"{len(r['terminated'])} | {', '.join(r['backend_errors']) or '-'} |")
-    L += ["", "## 全部候选", "", "| round | IP | prefix | composite | qualified | veto |", "|---|---|---|---|---|---|"]
+    L += ["", "## 全部候选", "", "| 轮次 | IP | 网段（CIDR） | 综合分 | 是否合格 | 排除原因 |", "|---|---|---|---|---|---|"]
     for c in sorted(d["candidates"], key=lambda x: (-x["composite"], x["round"])):
         L.append(f"| {c['round']} | {c['public_ip']} | {c['prefix']} | {c['composite']} | {c['qualified']} | {c['veto_reason'] or '-'} |")
-    L += ["", "## Prefix 统计（合格候选）", "", "| prefix | samples | mean | best |", "|---|---|---|---|"]
+    L += ["", "## 网段统计（合格候选）", "", "| 网段（CIDR） | 样本数 | 平均分 | 最高分 |", "|---|---|---|---|"]
     for p, v in sorted(d["prefixes"].items(), key=lambda kv: -kv[1]["best_composite"]):
         L.append(f"| {p} | {v['samples']} | {v['mean_composite']} | {v['best_composite']} |")
+    L += ["", "## 检查状态与探测错误", "",
+          "信誉状态：clear=所查名单未命中；listed=命中；unknown=检查未完成。各探测样本和丢包率见 report.json。", ""]
+    for c in d["candidates"]:
+        errors = [f"{pr['backend']}: {pr['error']}" for pr in c.get("probe_results", []) if pr.get("error")]
+        L.append(f"- {c['public_ip']}：信誉 {c.get('reputation_status', 'unknown')}"
+                 + (f"；探测错误：{'；'.join(errors)}" if errors else ""))
     return "\n".join(L) + "\n"
 
 

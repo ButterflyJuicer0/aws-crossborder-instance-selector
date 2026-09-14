@@ -52,7 +52,7 @@ def test_cleanup_terminates_only_run_and_keeps_infra(capsys):
     iam = boto3.client("iam", region_name=REGION)
     ssm = boto3.client("ssm", region_name=REGION)
     # moto 5 预置 /aws/service/ 保留公共参数且禁止写入，ensure_infra 会直接读取其默认 AMI 值
-    from crossborder_selector.aws.infra import ensure_infra, SG_NAME
+    from crossborder_selector.aws.infra import ensure_infra, PING_SG_NAME as SG_NAME
     from crossborder_selector.aws.ec2 import Ec2Manager
     cfg = load_config(None, {"region": REGION})
     infra = ensure_infra(ec2, iam, ssm, cfg)

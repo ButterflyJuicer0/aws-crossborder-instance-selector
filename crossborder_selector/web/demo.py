@@ -2,8 +2,8 @@
 import random
 import time
 
-from crossborder_selector.aws.ec2 import RUN_TAG, WINNER_TAG
-from crossborder_selector.aws.infra import Infra
+from crossborder_selector.aws.ec2 import RUN_TAG, SOURCE_TAG, WINNER_TAG
+from crossborder_selector.aws.infra import Infra, prepare_launch
 from crossborder_selector.config import ISPS
 from crossborder_selector.models import (Candidate, CandidateScore, IspProbe, ProbeResult,
                                          ReputationResult, RoundResult, RunResult, SourceResult)
@@ -22,6 +22,7 @@ class DemoOrchestrator:
     def __init__(self, cfg, ec2, ssm, backends, reputation_sources, prefix_lookup, infra, run_id,
                  clock=utc_now_iso, log=print, on_event=None, should_stop=None, step_delay=0.4):
         self.cfg, self.run_id = cfg, run_id
+        self.templates = getattr(infra, "launch_templates", ())
         self.now, self.log = clock, log
         self.on_event = on_event or (lambda e: None)
         self.should_stop = should_stop or (lambda: False)
@@ -38,7 +39,10 @@ class DemoOrchestrator:
     def _candidate(self, rno, idx):
         base = _BASES[idx % len(_BASES)]
         ip = f"{base}.{self.rnd.randint(1, 254)}.{self.rnd.randint(1, 254)}"
-        return Candidate(f"i-demo{rno}{idx:02d}", ip, _PREFIXES[base], rno, self.now())
+        template = self.templates[idx] if self.templates else {}
+        return Candidate(f"i-demo{rno}{idx:02d}", ip, _PREFIXES[base], rno, self.now(),
+                         image_id=template.get("ImageId", ""), instance_type=template.get("InstanceType", self.cfg.instance_type),
+                         root_volume=next((m["Ebs"] for m in template.get("BlockDeviceMappings", []) if "Ebs" in m), {}))
 
     def _score_candidate(self, c):
         composite = round(self.rnd.uniform(55, 97), 1)
@@ -96,7 +100,7 @@ class DemoOrchestrator:
             if self.should_stop():  # 本轮结束后再查一次：尊重取消，保留在位 winner
                 stop = "cancelled"
                 break
-            if incumbents and incumbents[0].composite >= self.cfg.target_score:
+            if len(incumbents) >= self.cfg.keep_top_k and incumbents[0].composite >= self.cfg.target_score:
                 stop = "target_score_reached"
                 break
         return RunResult(self.run_id, self.cfg.region, rounds, incumbents, started, self.now(), stop)
@@ -112,24 +116,42 @@ class _DemoEc2:
         return {"Vpcs": [{"VpcId": "vpc-demo", "IsDefault": True}]}
 
     def describe_subnets(self, **kw):
-        return {"Subnets": [{"SubnetId": "subnet-demo-a", "AvailabilityZone": "ap-east-1a"},
-                            {"SubnetId": "subnet-demo-b", "AvailabilityZone": "ap-east-1b"}]}
+        return {"Subnets": [{"SubnetId": "subnet-demo-a", "VpcId": "vpc-demo", "AvailabilityZone": "ap-east-1a"},
+                            {"SubnetId": "subnet-demo-b", "VpcId": "vpc-demo", "AvailabilityZone": "ap-east-1b"}]}
+
+    def describe_regions(self, **kw):
+        return {"Regions": [{"RegionName": r["code"], "OptInStatus": "opt-in-not-required"} for r in pricing.REGIONS]}
+
+    def describe_instance_types(self, InstanceTypes, **kw):
+        catalog = {i["type"]: i for i in pricing.INSTANCE_CATALOG}
+        return {"InstanceTypes": [
+            {"InstanceType": name, "VCpuInfo": {"DefaultVCpus": catalog.get(name, {}).get("vcpu", 2)},
+             "MemoryInfo": {"SizeInMiB": int(catalog.get(name, {}).get("memory_gib", 4) * 1024)},
+             "ProcessorInfo": {"SupportedArchitectures": [catalog.get(name, {}).get("arch", "x86_64")]}}
+            for name in InstanceTypes]}
+
+    def describe_images(self, ImageIds, **kw):
+        return {"Images": [{"ImageId": name, "State": "available", "Architecture": "arm64" if "arm64" in name else "x86_64",
+                            "RootDeviceName": "/dev/xvda", "RootDeviceType": "ebs",
+                            "BlockDeviceMappings": [{"DeviceName": "/dev/xvda", "Ebs": {"VolumeSize": 8}}]}
+                           for name in ImageIds]}
 
     def describe_instances(self, **kw):
         names = {f["Name"] for f in kw.get("Filters", [])}
         if f"tag:{WINNER_TAG}" in names:  # 无在位 winner
             return {"Reservations": []}
-        if f"tag:{RUN_TAG}" in names:  # 无本 run 遗留实例
+        if names & {f"tag:{RUN_TAG}", f"tag:{SOURCE_TAG}"}:  # 无本 run 遗留实例
             return {"Reservations": []}
         # Api.env 的运行中实例统计：固定 3 台
         return {"Reservations": [{"Instances": [
-            {"InstanceId": f"i-demo-run{i}", "State": {"Name": "running"}} for i in range(3)]}]}
+            {"InstanceId": f"i-demo-run{i}", "InstanceType": "t3.nano",
+             "State": {"Name": "running"}} for i in range(3)]}]}
 
     def get_service_quota(self, **kw):
         return {"Quota": {"Value": 64.0}}
 
     def describe_instance_type_offerings(self, **kw):
-        return {"InstanceTypeOfferings": [{"InstanceType": i["type"]} for i in pricing.INSTANCE_CATALOG]}
+        return {"InstanceTypeOfferings": [{"InstanceType": i["type"], "Location": "ap-east-1a"} for i in pricing.INSTANCE_CATALOG]}
 
     def modify_instance_attribute(self, **kw):
         self.calls.append(("modify_instance_attribute", kw))
@@ -158,14 +180,23 @@ class _DemoSts:
         return {"Account": "123456789012", "Arn": "arn:aws:iam::123456789012:user/demo"}
 
 
+class _DemoSsm:
+    def get_parameters(self, Names):
+        return {"Parameters": [{"Name": name, "Value": "ami-demo-" +
+                               ("ubuntu2404-" if "/24.04/" in name else "ubuntu2204-" if "/22.04/" in name else "") +
+                               ("arm64" if "arm64" in name else "x86_64")}
+                               for name in Names]}
+
+
 def demo_factory(cfg) -> dict:
     """返回一整套假 client；已含 sts 与 service-quotas，避免被 Api 包装层触发真实 boto3。"""
-    return {"ec2": _DemoEc2(), "iam": object(), "ssm": object(),
+    return {"ec2": _DemoEc2(), "iam": object(), "ssm": _DemoSsm(),
             "sts": _DemoSts(), "service-quotas": _DemoQuotas()}
 
 
 def demo_ensure_infra(ec2, iam, ssm, cfg) -> Infra:
-    return Infra("subnet-demo", "sg-demo", "crossborder-selector-ssm", "ami-demo")
+    templates = prepare_launch(ec2, ssm, cfg)
+    return Infra("subnet-demo", "sg-demo", "crossborder-selector-ssm", templates[0]["ImageId"], templates)
 
 
 def install_demo(run_manager, step_delay=0.4):

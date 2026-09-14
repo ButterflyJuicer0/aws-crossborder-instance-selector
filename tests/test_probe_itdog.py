@@ -30,12 +30,13 @@ def test_parse_page():
 
 class Resp:
     def __init__(self, text): self.text = text
+    def raise_for_status(self): pass
 
 
 class FakeSession:
     def __init__(self):
         self.cookies, self.posts = {}, []
-    def post(self, url, headers=None, data=None):
+    def post(self, url, headers=None, data=None, timeout=None):
         self.posts.append((url, headers, data))
         if "guard" not in self.cookies:
             self.cookies["guard"] = "abcdefgh123421"
@@ -80,7 +81,7 @@ def test_full_flow_maps_nodes_to_isps():
 
 def test_protocol_change_degrades_to_error():
     class Broken(FakeSession):
-        def post(self, url, headers=None, data=None):
+        def post(self, url, headers=None, data=None, timeout=None):
             self.cookies["guard"] = "abcdefgh123421"
             return Resp("<html>changed</html>")
     b = ItdogBackend(CFG, session=Broken(), ws_connect=lambda url: FakeWs([]))

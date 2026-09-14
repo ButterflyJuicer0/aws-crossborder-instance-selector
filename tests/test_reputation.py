@@ -28,9 +28,9 @@ def test_listed_ip_loses_weight_and_floors_at_zero():
     assert score_reputation("1.2.3.4", [FakeSource("a", 70, True), FakeSource("b", 60, True)]).score == 0.0
 
 
-def test_source_error_does_not_deduct():
+def test_source_error_reports_unknown():
     rr = score_reputation("1.2.3.4", [BoomSource()])
-    assert rr.score == 100.0 and rr.results[0].detail.startswith("error:")
+    assert rr.score is None and rr.status == "unknown" and rr.results[0].detail.startswith("error:")
 
 
 def test_dnsbl():

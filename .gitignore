@@ -6,3 +6,4 @@ history/
 config.yaml
 .pytest_cache/
 .superpowers/
+.DS_Store

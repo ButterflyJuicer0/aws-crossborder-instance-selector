@@ -4,14 +4,15 @@ import os
 import secrets
 import sys
 from datetime import datetime, timezone
+from dataclasses import replace
 
 import boto3
 
 from crossborder_selector.aws.ec2 import Ec2Manager
-from crossborder_selector.aws.infra import ensure_infra, delete_infra
+from crossborder_selector.aws.infra import ensure_infra, delete_infra, delete_shared_iam, security_group_name, needs_inbound_ping
 from crossborder_selector.aws.ipranges import load_ip_ranges, PrefixLookup
 from crossborder_selector.aws.ssm import SsmRunner
-from crossborder_selector.config import load_config
+from crossborder_selector.config import load_config, launch_groups
 from crossborder_selector.orchestrator import Orchestrator
 from crossborder_selector.probes.globalping import GlobalpingBackend
 from crossborder_selector.probes.itdog import ItdogBackend
@@ -46,19 +47,24 @@ def plan_summary(cfg, run_id) -> str:
     enabled = [n for n, v in cfg.backends.items() if v["enabled"]
                and not (n == "ripeatlas" and not (v.get("api_key") or "").strip())]
     lines = [f"DRY-RUN run-id={run_id}", f"region={cfg.region}",
-             f"per round: {cfg.batch_size} x {cfg.instance_type}, max_rounds={cfg.max_rounds}, "
+             "per round: " + ", ".join(f"{g['count']} x {g['instance_type']}" for g in launch_groups(cfg)) +
+             f", max_rounds={cfg.max_rounds}, "
              f"keep_top_k={cfg.keep_top_k}, target_score={cfg.target_score}",
-             f"infra: subnet={cfg.subnet_id or '<default VPC>'} sg={cfg.security_group_id or 'crossborder-selector-sg'} "
-             f"profile={cfg.instance_profile_name or 'crossborder-selector-ssm'} ami={cfg.image_id or '<AL2023 latest>'}",
+             f"infra: subnet={cfg.subnet_id or '<default VPC>'} sg={cfg.security_group_id or security_group_name(cfg)} "
+             f"profile={cfg.instance_profile_name or 'crossborder-selector-ssm'} ami={cfg.image_id or cfg.image_preset or '<AL2023 latest>'}",
+             f"root volume: {cfg.root_volume_size_gib or '<AMI default>'} GiB, {cfg.root_volume_type}, encrypted={cfg.root_volume_encrypted}",
+             f"per-instance overrides: {cfg.instance_overrides}",
              f"backends: {', '.join(enabled)}", f"protect winner: {cfg.protect}",
              "reverse targets: " + "; ".join(f"{k}={','.join(v)}" for k, v in cfg.backends['reverse']['targets'].items()),
+             "inbound: IPv4 ICMP Echo Request from 0.0.0.0/0" if needs_inbound_ping(cfg) else "inbound: no probe ingress required",
              "No AWS resources will be created."]
     return "\n".join(lines)
 
 
 def _overrides(args) -> dict:
     o = {}
-    for k in ("region", "batch_size", "max_rounds", "keep_top_k", "target_score", "instance_type"):
+    for k in ("region", "batch_size", "max_rounds", "keep_top_k", "target_score", "instance_type",
+              "image_id", "root_volume_size_gib", "root_volume_type", "subnet_id"):
         v = getattr(args, k, None)
         if v is not None:
             o[k] = v
@@ -120,6 +126,9 @@ def _do_select(args, factory) -> int:
 
 
 def _do_cleanup(args, factory) -> int:
+    if args.include_iam and not args.include_infra:
+        print("--include-iam requires --include-infra", file=sys.stderr)
+        return 2
     cfg = _load(args)
     clients = factory(cfg)
     m = Ec2Manager(clients["ec2"])
@@ -128,10 +137,14 @@ def _do_cleanup(args, factory) -> int:
     print(f"terminated {len(ids)} instance(s) tagged crossborder-run-id={args.run_id}: {ids}")
     if args.include_infra:
         if m.has_winners():
-            print("winners exist; refusing to delete shared SG / instance profile", file=sys.stderr)
+            print("retained instances exist in this region; refusing shared infrastructure cleanup", file=sys.stderr)
             return 1
         delete_infra(clients["ec2"], clients["iam"])
-        print("deleted crossborder-selector SG and instance profile")
+        print("deleted managed regional security groups; shared IAM resources retained")
+        if args.include_iam:
+            delete_shared_iam(clients["ec2"], clients["iam"],
+                              lambda region: factory(replace(cfg, region=region))["ec2"])
+            print("deleted shared IAM resources after ownership and cross-region dependency checks")
     return 0
 
 
@@ -145,17 +158,22 @@ def _do_report(args) -> int:
 def _parser():
     p = argparse.ArgumentParser(prog="crossborder-selector")
     sub = p.add_subparsers(dest="cmd", required=True)
-    s = sub.add_parser("select", help="多轮启动候选 EC2 并保留跨境最优实例")
+    s = sub.add_parser("select", help="多轮测量候选 EC2 并保留得分最高的实例")
     s.add_argument("--config"); s.add_argument("--dry-run", action="store_true")
     s.add_argument("--region"); s.add_argument("--instance-type")
+    s.add_argument("--image-id"); s.add_argument("--subnet-id")
+    s.add_argument("--root-volume-size-gib", type=int)
+    s.add_argument("--root-volume-type", choices=("gp3", "gp2", "standard"))
     for k in ("--batch-size", "--max-rounds", "--keep-top-k"):
         s.add_argument(k, type=int)
     s.add_argument("--target-score", type=float)
     s.add_argument("--enable-backend", action="append"); s.add_argument("--disable-backend", action="append")
-    s.add_argument("--protect", action="store_true", help="对 winner 开启 stop/termination protection")
-    c = sub.add_parser("cleanup", help="终止某 run-id 的全部候选机")
+    s.add_argument("--protect", action="store_true", help="对保留实例开启 API 停止保护和终止保护")
+    c = sub.add_parser("cleanup", help="终止指定运行中未标记为保留的候选实例")
     c.add_argument("--config"); c.add_argument("--region"); c.add_argument("--run-id", required=True)
     c.add_argument("--include-infra", action="store_true")
+    c.add_argument("--include-iam", action="store_true",
+                   help="also check all enabled regions and delete unused managed IAM resources")
     r = sub.add_parser("report", help="从 report.json 重生成 md/csv")
     r.add_argument("--run-id", required=True); r.add_argument("--output-dir", default="./out")
     return p

@@ -3,10 +3,13 @@ import json
 import os
 import queue
 import re
+import socket
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, urlsplit, parse_qs
 
 from crossborder_selector.web.api import ApiError
+from crossborder_selector.aws.catalog import region_catalog
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 _RUN_RE = re.compile(r"^/api/runs/([A-Za-z0-9][A-Za-z0-9-]*)(?:/(events|cancel|select|terminate_others|report\.(json|md|csv)))?$")
@@ -77,6 +80,13 @@ class Handler(BaseHTTPRequestHandler):
         except (OSError, ValueError):
             return None
 
+    def _save_selection(self, run_id, selection):
+        path = os.path.join(self.ctx["runs"].output_dir, run_id, "selection.json")
+        temporary = path + ".tmp"
+        with open(temporary, "w") as file:
+            json.dump(selection, file, ensure_ascii=False, indent=2)
+        os.replace(temporary, path)
+
     def _region_for(self, run_id):
         rec = self.ctx["runs"].get(run_id)
         if rec:
@@ -116,8 +126,18 @@ class Handler(BaseHTTPRequestHandler):
             if not ct.startswith("application/json"):
                 raise ApiError(415, "Content-Type 必须为 application/json")
             origin = self.headers.get("Origin")
-            if origin and not _is_loopback(_hostname(origin, has_scheme=True)):
-                raise ApiError(403, "跨站请求被拒绝")
+            if origin:
+                try:
+                    actual = urlsplit(origin)
+                    expected = urlsplit("http://" + self.headers.get("Host", ""))
+                    same_origin = (actual.scheme == expected.scheme and
+                                   actual.hostname == expected.hostname and
+                                   (actual.port or 80) == (expected.port or 80) and
+                                   not actual.username and not actual.password)
+                except ValueError:
+                    same_origin = False
+                if not same_origin:
+                    raise ApiError(403, "跨站请求被拒绝")
 
     def _route(self, method):
         self._guard(method)
@@ -128,11 +148,22 @@ class Handler(BaseHTTPRequestHandler):
         if method == "GET" and p == "/":
             return self._file(os.path.join(self.ctx["static_dir"], "index.html"), "text/html; charset=utf-8")
         if method == "GET" and p == "/api/meta":
-            return self._json(200, {"demo": self.ctx["demo"], "version": "1.0"})
+            return self._json(200, {"demo": self.ctx["demo"], "version": "1.0",
+                                    "default_region": api.load({}).region,
+                                    **region_catalog(), **api.settings(),
+                                    "allow_remote": self.ctx.get("allow_remote", False)})
+        if method == "GET" and p == "/api/regions":
+            return self._json(200, api.regions())
         if method == "GET" and p == "/api/env":
             return self._json(200, api.env(qs.get("region", ["ap-east-1"])[0]))
         if method == "GET" and p == "/api/options":
-            return self._json(200, api.options(qs.get("region", ["ap-east-1"])[0]))
+            return self._json(200, api.options(qs.get("region", ["ap-east-1"])[0], qs.get("subnet_id", [None])[0],
+                                              refresh=qs.get("refresh", ["0"])[0] == "1"))
+        if method == "GET" and p == "/api/images":
+            return self._json(200, api.images(qs.get("region", ["ap-east-1"])[0],
+                                             qs.get("instance_type", ["t3.nano"])[0]))
+        if method == "POST" and p == "/api/capacity":
+            return self._json(200, api.capacity(api.load(self._body())))
         if method == "POST" and p == "/api/plan":
             return self._json(200, api.plan(self._body()))
         if method == "POST" and p == "/api/runs":
@@ -179,20 +210,25 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"run_id": rid, "cancel_requested": True})
         if sub == "select" and method == "POST":
             body = self._body()
-            sel_path = os.path.join(runs.output_dir, rid, "selection.json")
-            if os.path.exists(sel_path) and not body.get("force"):
-                prev = (self._selection(rid) or {}).get("selected")
-                raise ApiError(409, f"本次 run 已选定 {prev}，如需重选请先手工处理")
-            result = api.select(rid, body.get("instance_id", ""), bool(body.get("protect")), bool(body.get("terminate_others")),
-                                self._region_for(rid), runs.winner_ids(rid))
-            with open(sel_path, "w") as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
+            with self.ctx["selection_lock"]:
+                previous = self._selection(rid)
+                if previous:
+                    raise ApiError(409, f"本次运行已选定 {previous.get('selected')}，请刷新查看")
+                result = api.select(rid, body.get("instance_id", ""), bool(body.get("protect")), bool(body.get("terminate_others")),
+                                    self._region_for(rid), runs.winner_ids(rid))
+                self._save_selection(rid, result)
             return self._json(200, result)
         if sub == "terminate_others" and method == "POST":
-            sel = self._selection(rid)
-            if not sel:
-                raise ApiError(409, "本次 run 尚未选定，无法终止其余候选")
-            return self._json(200, api.terminate_others(sel.get("selected", ""), self._region_for(rid), runs.winner_ids(rid)))
+            with self.ctx["selection_lock"]:
+                sel = self._selection(rid)
+                if not sel:
+                    raise ApiError(409, "本次运行尚未选定，无法终止其余候选")
+                already = set(sel.get("terminated", []))
+                remaining = [iid for iid in runs.winner_ids(rid) if iid not in already]
+                result = api.terminate_others(sel.get("selected", ""), self._region_for(rid), remaining)
+                sel["terminated"] = sorted(already | set(result["terminated"]))
+                self._save_selection(rid, sel)
+            return self._json(200, {**result, "selection": sel})
         if sub and sub.startswith("report.") and method == "GET":
             ctype = {"json": "application/json; charset=utf-8", "md": "text/markdown; charset=utf-8", "csv": "text/csv; charset=utf-8"}[ext]
             name = {"json": "report.json", "md": "report.md", "csv": "candidates.csv"}[ext]
@@ -236,8 +272,10 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(host, port, api, runs, static_dir=None, demo=False, allow_remote=False) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer((host, port), Handler)
+    class Server(ThreadingHTTPServer):
+        address_family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    server = Server((host, port), Handler)
     server.daemon_threads = True
     server.ctx = {"api": api, "runs": runs, "static_dir": static_dir or STATIC_DIR, "demo": demo,
-                  "allow_remote": allow_remote}
+                  "allow_remote": allow_remote, "selection_lock": threading.Lock()}
     return server

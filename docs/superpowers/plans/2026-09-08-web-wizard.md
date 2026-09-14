@@ -1,6 +1,8 @@
 # 本地 Web 向导 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> 历史设计记录（2026-09-09 已归档）：本文保留初始方案，部分行为已调整。当前配置、资源生命周期和测量限制以 [README](../../../README.md) 和 [MANUAL](../../../MANUAL.md) 为准。
+
+> 下列步骤和代码片段是初始实施计划的历史快照，不作为当前实现或操作指令。
 
 **Goal:** 在现有 `crossborder_selector` 之上加一个本地 Web 向导：六步引导客户完成环境检查、参数配置、计划确认、实时运行、查看报告、选定机器，并提供不接触 AWS 的演示模式。
 

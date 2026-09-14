@@ -7,6 +7,7 @@ from crossborder_selector.models import Candidate, CandidateScore, RoundResult, 
 from crossborder_selector.probes.base import run_backends
 from crossborder_selector.reputation.base import score_reputation
 from crossborder_selector.scoring import score_candidate, rank
+from crossborder_selector.config import launch_groups
 
 
 def utc_now_iso() -> str:
@@ -37,7 +38,8 @@ class Orchestrator:
                     stop = "cancelled"
                     break
                 self._emit("round_started", round=rno, batch_size=self.cfg.batch_size)
-                self.log(f"[round {rno}] launching {self.cfg.batch_size} x {self.cfg.instance_type}")
+                description = ", ".join(f"{g['count']} x {g['instance_type']}" for g in launch_groups(self.cfg))
+                self.log(f"[round {rno}] launching {description}")
                 try:
                     ids = self.ec2.launch(self.cfg.batch_size, self.run_id, rno, self.infra,
                                           self.cfg.instance_type)
@@ -52,7 +54,7 @@ class Orchestrator:
                 launched_all.update(c.instance_id for c in rr.launched)
                 rounds.append(rr)
                 incumbents = rr.kept
-                if incumbents and incumbents[0].composite >= self.cfg.target_score:
+                if len(incumbents) >= self.cfg.keep_top_k and incumbents[0].composite >= self.cfg.target_score:
                     stop = "target_score_reached"
                     break
         except BaseException:  # 含 KeyboardInterrupt：终止本 run 已启动的非在位者后再上抛
@@ -74,8 +76,13 @@ class Orchestrator:
             ips = self.ec2.public_ips(ids)
             cands = [Candidate(i, ips[i], self.prefix_lookup(ips[i]) if ips[i] else "", rno, self.now())
                      for i in ids]
+            for candidate in cands:
+                template = getattr(self.ec2, "launch_settings", {}).get(candidate.instance_id, {})
+                candidate.image_id = template.get("ImageId", "")
+                candidate.instance_type = template.get("InstanceType", self.cfg.instance_type)
+                candidate.root_volume = next((m["Ebs"] for m in template.get("BlockDeviceMappings", []) if "Ebs" in m), {})
             self._emit("candidates", round=rno,
-                       items=[{"instance_id": c.instance_id, "public_ip": c.public_ip, "prefix": c.prefix}
+                       items=[{"instance_id": c.instance_id, "public_ip": c.public_ip, "prefix": c.prefix, "instance_type": c.instance_type}
                               for c in cands])
 
             vetoed, survivors = [], []
@@ -86,6 +93,9 @@ class Orchestrator:
                 rep = score_reputation(c.public_ip, self.rep_sources)
                 if rep.any_listed:
                     vetoed.append(CandidateScore(c, rep, [], {}, {}, 0.0, False, "reputation"))
+                elif self.cfg.reputation.get("require_badlist", True) and any(
+                        r.source == "badlist" and r.status == "unknown" for r in rep.results):
+                    vetoed.append(CandidateScore(c, rep, [], {}, {}, 0.0, False, "reputation_unavailable"))
                 else:
                     survivors.append((c, rep))
             self.ec2.terminate([v.candidate.instance_id for v in vetoed])

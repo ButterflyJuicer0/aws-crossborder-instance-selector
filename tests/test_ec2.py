@@ -50,14 +50,14 @@ def test_list_and_terminate_only_this_run():
 
 
 @mock_aws
-def test_mark_winner_swaps_tags_and_has_winners():
+def test_mark_winner_preserves_ownership_and_cleanup_excludes_it():
     ec2, infra = _setup()
     m = Ec2Manager(ec2, sleeper=lambda s: None)
     (iid,) = m.launch(1, "xb-w", 1, infra, "t3.nano")
     assert m.has_winners() is False
     m.mark_winner(iid, "xb-w", 93.456, 2, "2026-09-07T00:00:00Z")
     t = _tags(ec2, iid)
-    assert RUN_TAG not in t
+    assert t[RUN_TAG] == "xb-w"
     assert t[WINNER_TAG] == "true" and t[SCORE_TAG] == "93.5" and t["crossborder-round"] == "2"
     assert m.list_run_instances("xb-w") == [] and m.has_winners() is True
 
@@ -88,7 +88,7 @@ def test_protect_sets_both_attributes():
     assert ec2.describe_instance_attribute(InstanceId=iid, Attribute="disableApiTermination")["DisableApiTermination"]["Value"] is True
 
 
-def test_launch_requests_full_batch_with_min_one():
+def test_launch_requests_exact_batch_size():
     # 用假客户端断言下发给 RunInstances 的参数，不经过 moto 的 MinCount 行为
     class FakeEc2:
         def __init__(self):
@@ -100,5 +100,5 @@ def test_launch_requests_full_batch_with_min_one():
     m = Ec2Manager(fake, sleeper=lambda s: None)
     infra = Infra("subnet-x", "sg-x", "profile-x", "ami-x")
     ids = m.launch(3, "xb-run1", 2, infra, "t3.nano")
-    assert fake.kw["MinCount"] == 1 and fake.kw["MaxCount"] == 3
+    assert fake.kw["MinCount"] == 3 and fake.kw["MaxCount"] == 3
     assert len(ids) == 3

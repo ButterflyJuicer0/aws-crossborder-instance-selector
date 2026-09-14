@@ -48,7 +48,7 @@ def test_veto_reverse_unreachable():
 
 
 def test_veto_min_backends():
-    s = score_candidate(C, CLEAN, [ProbeResult("reverse", [], "ssm offline")], W, 1, True)
+    s = score_candidate(C, CLEAN, [ProbeResult("reverse", [], "ssm offline")], W, 1, False)
     assert s.qualified is False and s.veto_reason == "min_backends"
 
 

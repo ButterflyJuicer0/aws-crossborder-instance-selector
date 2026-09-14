@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>跨境优选实例报告</title>
+<title>EC2 网络测量与筛选报告</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{
@@ -83,7 +83,7 @@ footer{padding:12px 28px 28px;color:var(--muted);font-size:12px;text-align:cente
 <body>
 <header>
   <div>
-    <h1>跨境优选实例报告 <span id="sample-note" class="badge-note">示例数据</span></h1>
+    <h1>EC2 网络测量与筛选报告 <span id="sample-note" class="badge-note">示例数据</span></h1>
     <div class="sub" id="meta">载入 out/&lt;run-id&gt;/report.json 或 candidates.csv 后显示本次 run 的结果</div>
   </div>
   <div class="loader">
@@ -101,30 +101,30 @@ footer{padding:12px 28px 28px;color:var(--muted);font-size:12px;text-align:cente
     </section>
 
     <section>
-      <h2>Winner</h2>
+      <h2>测量结束时保留的实例</h2>
       <div class="tablewrap"><table id="winners"><thead><tr>
-        <th>instance</th><th>公网 IP</th><th>prefix</th><th class="num">综合分</th><th class="num">电信</th><th class="num">联通</th><th class="num">移动</th><th class="num">轮次</th>
+        <th>实例 ID</th><th>公网 IP</th><th>网段（CIDR）</th><th class="num">综合分</th><th class="num">电信</th><th class="num">联通</th><th class="num">移动</th><th class="num">轮次</th>
       </tr></thead><tbody></tbody></table></div>
     </section>
 
     <section>
       <h2>每轮概览</h2>
       <div class="tablewrap"><table id="rounds"><thead><tr>
-        <th class="num">轮次</th><th class="num">启动</th><th class="num">信誉否决</th><th class="num">拨测</th><th>保留</th><th class="num">终止</th><th>backend 错误</th>
+        <th class="num">轮次</th><th class="num">启动</th><th class="num">信誉否决</th><th class="num">拨测</th><th>保留</th><th class="num">终止</th><th>探测源错误</th>
       </tr></thead><tbody></tbody></table></div>
     </section>
 
     <section>
       <h2>全部候选</h2>
       <div class="tablewrap"><table id="cands"><thead><tr>
-        <th class="num">轮次</th><th>instance</th><th>公网 IP</th><th>prefix</th><th>综合分</th><th>状态</th><th class="num">reverse 电信</th><th class="num">reverse 联通</th><th class="num">reverse 移动</th><th class="num">HK</th><th class="num">TW</th>
+        <th class="num">轮次</th><th>实例 ID</th><th>公网 IP</th><th>网段（CIDR）</th><th>综合分</th><th>状态</th><th class="num">reverse 电信</th><th class="num">reverse 联通</th><th class="num">reverse 移动</th><th class="num">HK</th><th class="num">TW</th>
       </tr></thead><tbody></tbody></table></div>
     </section>
 
     <section>
-      <h2>Prefix 统计（合格候选）</h2>
+      <h2>网段统计（合格候选）</h2>
       <div class="tablewrap"><table id="prefixes"><thead><tr>
-        <th>prefix</th><th class="num">样本</th><th class="num">均值</th><th class="num">最高</th>
+        <th>网段（CIDR）</th><th class="num">样本</th><th class="num">均值</th><th class="num">最高</th>
       </tr></thead><tbody></tbody></table></div>
     </section>
   </div>
@@ -132,11 +132,11 @@ footer{padding:12px 28px 28px;color:var(--muted);font-size:12px;text-align:cente
   <aside>
     <div class="panel">
       <h3>生成运行命令</h3>
-      <div class="field"><label for="f-region">Region</label><input id="f-region" value="ap-east-1"></div>
+      <div class="field"><label for="f-region">区域</label><input id="f-region" value="ap-east-1"></div>
       <div class="field"><label for="f-batch">每轮候选数</label><input id="f-batch" type="number" min="1" value="10"></div>
       <div class="field"><label for="f-rounds">最大轮次</label><input id="f-rounds" type="number" min="1" value="3"></div>
       <div class="field"><label for="f-keep">保留数</label><input id="f-keep" type="number" min="1" value="1"></div>
-      <div class="field check"><input id="f-protect" type="checkbox"><label for="f-protect">开启 --protect（winner 禁止 API stop/terminate）</label></div>
+      <div class="field check"><input id="f-protect" type="checkbox"><label for="f-protect">开启 --protect（对保留实例设置 API 停止保护和终止保护）</label></div>
       <div class="field check"><input id="f-itdog" type="checkbox"><label for="f-itdog">启用 itdog（非官方接口）</label></div>
       <div class="field check"><input id="f-dry" type="checkbox" checked><label for="f-dry">先 dry-run</label></div>
       <pre class="cmd" id="cmd"></pre>
@@ -145,11 +145,11 @@ footer{padding:12px 28px 28px;color:var(--muted);font-size:12px;text-align:cente
     <div class="panel">
       <h3>读报告时注意</h3>
       <ul class="notes">
-        <li>winner 不能 stop。stop/start 会更换公网 IPv4，reboot 不会。</li>
-        <li>winner 已移除 <code>crossborder-run-id</code> 标签，<code>cleanup --run-id</code> 不会终止它。</li>
-        <li><code>veto_reason</code> 为 reputation 且 detail 是 <code>error:...</code>：本机在用公共递归 DNS，Spamhaus 返回错误码。</li>
-        <li>全部 <code>reverse_unreachable</code>：更换 <code>backends.reverse.targets</code>。</li>
-        <li>分项列显示的是原始 rtt 中位数（ms），综合分才是加权结果。</li>
+        <li>如需保留自动分配的公网 IPv4，应保持实例运行。停止后再启动通常会分配新 IP；重启通常保留 IP。</li>
+        <li>保留实例继续带有运行归属标签；<code>cleanup --run-id</code> 会排除带 <code>crossborder-winner=true</code> 的实例。</li>
+        <li><code>reputation_status=unknown</code> 表示检查未完成。使用 JSON 中的 <code>reputation_results</code> 区分 DNS 超时、服务错误及名单命中；CSV 不包含完整明细。</li>
+        <li>出现 <code>reverse_unreachable</code>：先检查探测详情、出站网络和目标可达性，再决定是否调整 <code>backends.reverse.targets</code>。</li>
+        <li>候选表时延列为各目标平均往返时延的算术平均（ms）；保留实例表的运营商分项和综合分为评分结果。</li>
       </ul>
     </div>
   </aside>
@@ -182,8 +182,8 @@ const SAMPLE = {
 const $ = s => document.querySelector(s);
 const fmt = v => (v === null || v === undefined || v === "") ? "—" : (typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(1)) : String(v));
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const STOP = {target_score_reached:"达到目标分", max_rounds:"轮次用尽", no_qualified:"无合格候选", launch_failed:"后续轮次启动失败，保留在位 winner"};
-const VETO = {reputation:"信誉否决", reverse_unreachable:"三网全部丢包", min_backends:"有效 backend 不足", no_public_ip:"无公网 IP"};
+const STOP = {target_score_reached:"达到目标分", max_rounds:"轮次用尽", no_qualified:"无合格候选", launch_failed:"后续轮次启动失败，保留此前选出的实例"};
+const VETO = {reputation:"信誉否决", reverse_unreachable:"反向探测均无响应", reverse_unavailable:"反向探测不可用", reverse_incomplete:"反向探测未覆盖三家运营商", unreachable:"所有探测均无响应", min_backends:"有效探测源不足", no_public_ip:"无公网 IP"};
 
 function scoreCell(v){
   if (v === null || v === undefined) return "—";
@@ -191,7 +191,7 @@ function scoreCell(v){
   return `<span class="score"><span class="num">${fmt(v)}</span><span class="bar"><i class="${cls}" style="width:${Math.max(0,Math.min(100,v))}%"></i></span></span>`;
 }
 function statusCell(c){
-  if (c.kept) return `<span class="pill good">winner</span>`;
+  if (c.kept) return `<span class="pill good">测量结束时保留</span>`;
   if (c.qualified === true || c.qualified === "True" || c.qualified === "true") return `<span class="pill neutral">合格，未保留</span>`;
   const r = c.veto_reason || "未合格";
   return `<span class="pill bad" title="${esc(r)}">${esc(VETO[r] || r)}</span>`;
@@ -202,12 +202,12 @@ function render(d, isSample){
   $("#meta").textContent = d.run_id ? `run-id ${d.run_id} · ${d.region || ""} · ${d.started_at || ""} → ${d.finished_at || ""}` : "仅载入 candidates.csv：没有 run 元数据与每轮概览";
   const w = (d.winners && d.winners[0]) || null;
   const tiles = [
-    ["Winner 公网 IP", w ? w.public_ip : "无", true, false],
+    ["保留实例公网 IP", w ? w.public_ip : "无", true, false],
     ["综合分", w ? fmt(w.composite) : "—", false, false],
     ["停止原因", d.stop_reason ? (STOP[d.stop_reason] || d.stop_reason) : "—", false, true],
     ["完成轮次", d.rounds_completed ?? (d.rounds ? d.rounds.length : "—"), false, false],
     ["候选总数", d.candidates ? d.candidates.length : 0, false, false],
-    ["Region", d.region || "—", false, true],
+    ["区域", d.region || "—", false, true],
   ];
   $("#tiles").innerHTML = tiles.map(([k,v,acc,small]) => `<div class="tile${acc?" accent":""}"><div class="k">${esc(k)}</div><div class="v${small?" small":""}${typeof v==="string"&&/^\d/.test(v)?" mono":""}">${esc(v)}</div></div>`).join("");
 
@@ -229,7 +229,7 @@ function render(d, isSample){
   const pb = $("#prefixes tbody");
   const pfx = Object.entries(d.prefixes||{}).sort((a,b) => b[1].best_composite - a[1].best_composite);
   pb.innerHTML = pfx.length ? pfx.map(([p,v]) => `<tr><td class="mono">${esc(p)}</td><td class="num">${v.samples}</td><td class="num">${fmt(v.mean_composite)}</td><td class="num">${fmt(v.best_composite)}</td></tr>`).join("")
-    : `<tr><td colspan="4" class="empty">无 prefix 统计</td></tr>`;
+    : `<tr><td colspan="4" class="empty">无网段统计</td></tr>`;
 }
 
 function parseCsv(text){

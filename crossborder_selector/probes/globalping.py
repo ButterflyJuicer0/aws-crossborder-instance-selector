@@ -24,7 +24,7 @@ class GlobalpingBackend(ProbeBackend):
         self.cfg, self.http = backend_cfg, http or _default_http
         self._sleep, self._now, self.poll_s = sleeper, clock, poll_s
         token = (self.cfg.get("api_token") or "").strip()
-        # 带 token 时速率上限从 250 tests/h 提升到 500 tests/h
+        # token 用于认证；额度取决于服务当前规则及账户状态。
         self.headers = {"Authorization": f"Bearer {token}"} if token else {}
 
     def _measure(self, ip) -> ProbeResult:

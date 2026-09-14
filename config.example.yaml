@@ -1,11 +1,23 @@
-# 跨境实例干净 IP 选择器示例配置。复制为 config.yaml 后按需修改。
+# EC2 网络测量与实例筛选示例配置。复制为 config.yaml 后按需修改。
 
 # 目标 AWS 区域（默认香港 ap-east-1）
 region: ap-east-1
 # 探测实例规格
 instance_type: t3.nano
+# 多机型清单；非空时每轮总数由 count 相加，覆盖单机型的 instance_type / batch_size
+# instance_groups: [{instance_type: t3.nano, count: 2}, {instance_type: t4g.nano, count: 3}]
+instance_groups: []
 # 自定义 AMI，留空则由启动逻辑自动选择
 image_id: ''
+# 常用系统：al2023 / ubuntu2404 / ubuntu2204，按每台机型架构解析；不能与非空 image_id 同用
+image_preset: ''
+# 系统盘：null 使用镜像默认大小；启动前验证不小于镜像要求
+root_volume_size_gib: null
+root_volume_type: gp3  # gp3 / gp2 / standard
+root_volume_encrypted: true
+# 可按每轮候选序号覆盖镜像和系统盘，未填写的字段继承上述默认值
+# 例如 [{}, {image_id: ami-0123456789abcdef0, root_volume_size_gib: 40}]
+instance_overrides: []
 # 指定子网 ID，留空则使用默认 VPC 的子网
 subnet_id: ''
 # 指定安全组 ID，留空则自动创建/选择
@@ -16,17 +28,18 @@ instance_profile_name: ''
 batch_size: 10
 # 最大轮次数，达到即停止
 max_rounds: 3
-# 每轮结束后全局保留的优胜者数量
+# 最终希望保留的数量（1–50）；每轮从已测候选中保留前 K 台
+# 不能超过 batch_size × max_rounds；数量不足时不会仅因分数达标而提前结束
 keep_top_k: 1
 # 综合得分达到该阈值即提前结束
 target_score: 90.0
-# 判定有效所需的最少可用 backend 数
+# 判定候选合格所需的最少有效探测源数
 min_backends: 1
 # 等待实例 SSM 上线的超时时间（秒）
 ssm_online_timeout_s: 180
-# 是否为保留的实例开启终止保护
+# 是否为保留的实例开启 API 停止保护和终止保护
 protect: false
-# 各探测 backend 的配置
+# 各探测源的配置
 backends:
   reverse:
     enabled: true
@@ -54,7 +67,7 @@ backends:
     limit_per_location: 2
     packets: 4
     timeout_s: 60
-    # 可选 API token；留空则匿名（250 tests/h），填入后走认证额度（500 tests/h）
+    # 可选 API token；留空则匿名。额度以服务当前规则和账户状态为准。
     api_token: ''
   ripeatlas:
     enabled: false
@@ -65,7 +78,7 @@ backends:
   itdog:
     enabled: false  # 非官方接口，默认关闭
     timeout_s: 30
-    # node_id -> isp，默认北京/上海三网 + 深圳电信/移动
+    # node_id -> isp（运营商分类）；节点位置及可用性需以服务当前数据核实
     nodes:
       '1310': telecom
       '1273': unicom
@@ -75,7 +88,7 @@ backends:
       '1249': mobile
       '1169': telecom
       '1290': mobile
-# 综合评分权重（backend 权重、三网权重、延迟好/坏阈值）
+# 综合评分权重（探测源权重、三网权重、延迟好/坏阈值）
 weights:
   backends:
     reverse: 0.5
@@ -94,6 +107,7 @@ reputation:
   - zen.spamhaus.org
   - b.barracudacentral.org
   badlist_url: https://raw.githubusercontent.com/mitchellkrogza/nginx-ultimate-bad-bot-blocker/master/_generator_lists/bad-ip-addresses.list
+  require_badlist: true  # 下载或解析失败时，排除该候选；支持原始 IP/CIDR 文本名单
   abuseipdb_api_key: ''  # 留空则跳过
 # 结果输出目录
 output_dir: ./out

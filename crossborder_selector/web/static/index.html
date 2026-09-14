@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>跨境优选实例向导</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<title>EC2 网络测量与实例筛选</title>
+
 <style>
 :root{
   --bg:#F5F7F9; --surface:#FFFFFF; --ink:#1B2430; --muted:#5F6B79; --line:#D9DFE6;
@@ -149,12 +149,52 @@ aside.hist h3{margin:0 0 10px;font-size:14px;font-weight:600;display:flex;align-
 .modal .list{font-family:"IBM Plex Mono",monospace;font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:10px 0;max-height:140px;overflow:auto;white-space:pre-wrap}
 footer{padding:14px 28px 28px;color:var(--muted);font-size:12px;text-align:center}
 [hidden]{display:none!important}
+/* Compact layout: primary fields first, details on demand. */
+main{display:block;max-width:1040px;padding:24px;margin:0 auto}
+nav.steps{position:static;border:0;background:none;padding:0;margin-bottom:22px}
+nav.steps ol{display:flex;gap:8px;flex-wrap:wrap}
+nav.steps li{padding:6px 12px}
+h2{font-size:20px;letter-spacing:0;text-transform:none;color:var(--ink)}
+.field-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px 22px}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field.full{grid-column:1/-1}
+.field label{font-weight:500}
+.field input,.field select,td input,td select{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font:inherit}
+.inline{display:flex;gap:8px;align-items:center}.inline input{flex:1;min-width:0}
+.combo{position:relative;min-width:0;flex:1}
+.combo input{padding-right:38px}
+.combo-toggle{position:absolute;right:1px;top:1px;bottom:1px;width:36px;border:0;background:transparent;color:var(--muted);cursor:pointer;border-radius:5px;font:inherit}
+.combo-menu{position:absolute;top:calc(100% + 5px);left:0;right:0;z-index:25;border:1px solid var(--line);border-radius:8px;background:var(--surface);box-shadow:0 8px 24px #0002;display:flex;flex-direction:column;max-height:360px;overflow:hidden}
+.combo-menu.above{top:auto;bottom:calc(100% + 5px)}
+.combo-list{overflow-y:auto;overscroll-behavior:contain;min-height:0;scrollbar-gutter:stable;padding:4px}
+.combo-option{padding:9px 10px;border-radius:5px;cursor:pointer;white-space:normal;overflow-wrap:anywhere}
+.combo-option:hover,.combo-option.active{background:var(--accent-soft)}
+.combo-option strong{display:block;font-weight:600}
+.combo-option small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.combo-count{padding:7px 12px;border-top:1px solid var(--line);font-size:12px;color:var(--muted);flex:none}
+.image-detail{font-size:12px;color:var(--muted);white-space:normal;overflow-wrap:anywhere;margin:5px 0 0}
+.image-cell{min-width:245px;max-width:420px}
+.launch-row{display:grid;grid-template-columns:minmax(0,1fr) 110px auto;gap:12px;align-items:start;margin-bottom:14px}
+.launch-row .remove-group{margin-top:29px}
+.quantity-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
+.quantity-value{padding:7px 0;font-size:22px;font-weight:600}
+.catalog-status{padding:10px 12px;background:var(--row);border-radius:6px;overflow-wrap:anywhere}
+.catalog-status.error{background:var(--warn-soft);color:var(--ink)}
+@media(max-width:640px){.quantity-grid{grid-template-columns:1fr}}
+@media(max-width:640px){.launch-row{grid-template-columns:minmax(0,1fr) 80px}.launch-row .remove-group{grid-column:1/-1;margin:0;justify-self:end}}
+.hint,.compact-note{font-size:12px;color:var(--muted)}
+.compact-note{margin:12px 0}.field .hint{margin:0}
+details.card>summary,details.hist>summary{cursor:pointer;font-weight:500;padding:2px 0}
+details.card[open]>summary,details.hist[open]>summary{margin-bottom:16px}
+details.hist{padding:16px 0;border-top:1px solid var(--line);margin-top:28px}
+#est{border:0;background:none;padding:0;margin:12px 0}
+@media(max-width:640px){main{padding:16px}.field-grid{grid-template-columns:1fr}.field.full{grid-column:auto}header{padding:16px}nav.steps li{padding:5px 7px}}
 </style>
 </head>
 <body>
 <header>
-  <h1>跨境优选实例向导</h1>
-  <div class="region">Region <b id="region-label">—</b></div>
+  <h1>EC2 网络测量与实例筛选</h1>
+  <div class="region">区域 <b id="region-label">—</b></div>
 </header>
 <div id="demo-banner" class="demo-banner" hidden>演示模式，不接触 AWS。以下为模拟数据，用于演练完整流程。</div>
 <div id="errbar" class="errbar" hidden><span id="errmsg"></span><button class="btn" id="err-x" type="button">关闭</button></div>
@@ -162,12 +202,12 @@ footer{padding:14px 28px 28px;color:var(--muted);font-size:12px;text-align:cente
 <main>
   <nav class="steps"><ol id="stepnav"></ol></nav>
   <div id="content"></div>
-  <aside class="hist">
-    <h3>历史运行 <span id="hist-count" class="badge-note" hidden></span></h3>
+  <details class="hist">
+    <summary>历史运行 <span id="hist-count" class="badge-note" hidden></span></summary>
     <div id="hist-list"><div class="empty">暂无运行记录</div></div>
-  </aside>
+  </details>
 </main>
-<footer>本服务只监听本机回环地址，使用本机 AWS 凭证；所有金额均为估算值，实际以账单为准。</footer>
+<footer id="service-note">默认仅监听本机，使用本机 AWS 凭证。费用为参考估算，实际以账单为准。</footer>
 
 <div id="modal-root"></div>
 
@@ -176,22 +216,32 @@ footer{padding:14px 28px 28px;color:var(--muted);font-size:12px;text-align:cente
 // ---------- 常量与工具 ----------
 const STEPS = ["环境检查","配置参数","确认计划","运行中","结果与选机","完成"];
 const STOP = {target_score_reached:"达到目标分",max_rounds:"轮次用尽",no_qualified:"无合格候选",
-              cancelled:"已取消（保留在位 winner）",launch_failed:"后续轮次启动失败，保留在位 winner"};
-const VETO = {reputation:"信誉否决",reverse_unreachable:"三网全部丢包",min_backends:"有效 backend 不足",no_public_ip:"无公网 IP"};
+              cancelled:"已取消（保留已测实例）",launch_failed:"后续轮次启动失败，保留已测实例"};
+const VETO = {reputation_unavailable:"GitHub 名单检查失败",reputation:"命中 IP 信誉名单",reverse_unreachable:"所有反向探测目标均未响应",
+              reverse_unavailable:"反向探测失败",reverse_incomplete:"反向探测未覆盖全部配置运营商",
+              unreachable:"所有探测均未收到响应",min_backends:"有效探测源不足",no_public_ip:"无公网 IP"};
 const ISP_CN = {telecom:"电信",unicom:"联通",mobile:"移动"};
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmt = v => (v === null || v === undefined || v === "") ? "—" : (typeof v === "number" ? (Number.isInteger(v) ? String(v) : v.toFixed(1)) : String(v));
 const money = v => (v == null ? "—" : "估算 $" + Number(v).toFixed(3));
+const duration = p => (p.estimated_minutes_range || [p.estimated_minutes]).join("～");
+const cost = p => p.estimated_cost_range_usd
+  ? "$" + p.estimated_cost_range_usd.map(v => Number(v).toFixed(3)).join("～$")
+  : "暂无该区域或机型报价";
+const runRegion = () => (state.runDetail && state.runDetail.region) || (state.report && state.report.region) || state.region;
 
 const state = {
-  step: 1, reached: 1, demo: false, region: "ap-east-1",
+  step: 2, reached: 2, demo: false, region: "ap-east-1", regions: [], optionsSeq: 0, loading: false,
+  optionsKey: "", optionsError: "", optionsController: null, typeSpecs: {},
   options: null, env: null, form: null, plan: null,
   runId: null, runDetail: null, report: null, selection: null, runState: null,
   es: null, pollTimer: null, timerId: null, runStartMs: 0,
   rounds: [], logLines: [], maxRounds: 3, planTimer: null,
   sort: {key:"composite", dir:-1}, following: false,
+  images: null, imageKey: "", imageSeq: 0, imageTimer: null, imageStatus: "",
+  imageChoice: "auto", instanceImageChoices: [],
 };
 
 async function api(path, opts){
@@ -210,19 +260,19 @@ $("#err-x").addEventListener("click", clearError);
 // ---------- 导航渲染 ----------
 function renderNav(){
   const ol = $("#stepnav");
-  ol.innerHTML = STEPS.map((label, i) => {
-    const n = i + 1;
-    const cls = n === state.step ? "active" : (n <= state.reached ? "done" : "todo");
-    return `<li class="${cls}" data-step="${n}"><span class="n">${n}</span><span>${esc(label)}</span></li>`;
+  ol.innerHTML = [[2,"配置"],[3,"确认"],[4,"运行"],[5,"结果"]].map(([n,label],i) => {
+    const cls = (n === state.step || (n === 5 && state.step === 6)) ? "active" : (n <= state.reached ? "done" : "todo");
+    return `<li class="${cls}" data-step="${n}"><span class="n">${i+1}</span><span>${esc(label)}</span></li>`;
   }).join("");
   ol.querySelectorAll("li.done").forEach(li => li.addEventListener("click", () => {
     const n = Number(li.dataset.step);
     if (n !== state.step) goStep(n);
   }));
-  $("#region-label").textContent = state.region;
+  $("#region-label").textContent = state.step >= 4 ? runRegion() : state.region;
 }
 
 function goStep(n){
+  if (n === 1) n = 2;
   state.step = n;
   state.reached = Math.max(state.reached, n);
   renderNav();
@@ -231,242 +281,438 @@ function goStep(n){
   (mounts[n] || (()=>{}))();
 }
 
-// ---------- 数据加载 ----------
-async function loadOptions(){
-  state.options = await api("/api/options?region=" + encodeURIComponent(state.region));
-  if (!state.form){ initForm(); return; }
-  // 切换 Region 后当前机型可能不在新 offerings 中，回退到列表第一项
-  const types = state.options.instance_types || [];
-  if (!types.some(t => t.type === state.form.instance_type))
-    state.form.instance_type = (types[0] || {}).type;
+// ---------- 配置 ----------
+function catalogKey(){return state.region+"|"+(state.form?.subnet_id || "");}
+function typeDescription(t){
+  return t.vcpu!=null && t.memory_gib!=null ? `${t.vcpu} vCPU · ${t.memory_gib} GiB 内存 · ${t.arch}` : "选择后查询 CPU、内存和架构";
+}
+function refreshCatalogView(){
+  const status=$("#catalog-status"), count=state.options?.instance_types?.length || 0;
+  if(status){
+    status.classList.toggle("error",!!state.optionsError);
+    status.textContent=state.loading ? (count ? `正在刷新 AWS 机型，暂显示上次查询的 ${count} 项…` : "正在从 AWS 加载机型名称…") :
+      state.optionsError ? (count ? `刷新失败，显示上次查询的 ${count} 个机型。` : "机型列表加载失败。")+" "+state.optionsError :
+      count ? `已加载 ${count} 个 AWS 机型${state.options.availability_zone ? " · "+state.options.availability_zone : ""}。输入可筛选，选择后显示规格。` :
+      "AWS 未返回该区域或子网的机型，请检查区域和子网设置。";
+  }
+  const button=$("#reload-options");if(button){button.disabled=state.loading;button.textContent=state.loading?"加载中…":"重新加载机型";}
+  document.querySelectorAll("#launch-groups .combo").forEach(root=>root.refreshChoices?.());
+  if(state.form)updateTypeInfo();
+}
+async function loadOptions(refresh=false){
+  const seq = ++state.optionsSeq, region = state.region, key=catalogKey();
+  state.optionsController?.abort();
+  const controller=new AbortController();state.optionsController=controller;
+  if(state.optionsKey!==key)state.options.instance_types=[];
+  state.loading = true;
+  state.optionsError="";state.optionsKey=key;refreshCatalogView();
+  const timeout=setTimeout(()=>controller.abort(),20000);
+  try {
+    const subnet = state.form ? state.form.subnet_id : "";
+    const data = await api("/api/options?region=" + encodeURIComponent(region) + "&subnet_id=" + encodeURIComponent(subnet || "")+(refresh?"&refresh=1":""),{signal:controller.signal});
+    if (seq !== state.optionsSeq || key!==catalogKey()) return;
+    state.optionsError=(data.errors || []).join("；");
+    const previous=state.options.instance_types || [];
+    state.options = {...data,instance_types:(data.instance_types?.length || !state.optionsError ? data.instance_types || [] : previous)
+      .map(t=>({...t,...(state.typeSpecs[region+"|"+t.type] || {})}))};
+    if (!state.form) initForm();
+  } catch(e){
+    if(seq===state.optionsSeq && key===catalogKey())state.optionsError=e.name==="AbortError"?"AWS 查询超过 20 秒，请点击“重新加载机型”重试。":e.message;
+  } finally {
+    clearTimeout(timeout);
+    if (seq === state.optionsSeq){state.loading=false;refreshCatalogView();}
+  }
 }
 function initForm(){
   const d = state.options.defaults;
   const backends = {};
-  for (const b of state.options.backends){
-    const usable = !(b.needs_key && !b.key_present);
-    backends[b.name] = b.enabled && usable;
-  }
+  for (const b of state.options.backends || []) backends[b.name] = b.enabled && !(b.needs_key && !b.key_present);
   state.form = {
-    instance_type: d.instance_type, batch_size: d.batch_size, max_rounds: d.max_rounds,
-    keep_top_k: d.keep_top_k, target_score: d.target_score, protect: !!d.protect, backends,
+    instance_type:d.instance_type, batch_size:d.batch_size, max_rounds:d.max_rounds,
+    instance_groups:(d.instance_groups?.length ? d.instance_groups : [{instance_type:d.instance_type,count:d.batch_size}]).map(g=>({...g})),
+    keep_top_k:d.keep_top_k, target_score:d.target_score, protect:!!d.protect, backends,
+    image_id:d.image_id || "", subnet_id:d.subnet_id || "", badlist_url:d.reputation.badlist_url, require_badlist:d.reputation.require_badlist !== false,
+    root_volume_size_gib:d.root_volume_size_gib, root_volume_type:d.root_volume_type || "gp3",
+    root_volume_encrypted:d.root_volume_encrypted !== false,
+    instance_overrides:(d.instance_overrides || []).map(x => ({...x})),
   };
+  state.imageChoice = d.image_preset || (d.image_id ? "custom" : "auto");
+  state.instanceImageChoices = state.form.instance_overrides.map(o => o.image_preset || (o.image_id ? "custom" : "inherit"));
 }
 function buildOverrides(){
-  const f = state.form, o = {
-    region: state.region, instance_type: f.instance_type, batch_size: f.batch_size,
-    max_rounds: f.max_rounds, keep_top_k: f.keep_top_k, target_score: f.target_score,
-    protect: f.protect, enable_backends: [], disable_backends: [],
-  };
-  for (const b of state.options.backends){
-    const want = !!f.backends[b.name];
-    if (want && !b.enabled) o.enable_backends.push(b.name);
-    if (!want && b.enabled) o.disable_backends.push(b.name);
-  }
-  return o;
+  const f = state.form;
+  return {region:state.region, instance_type:f.instance_type, batch_size:f.batch_size,
+    instance_groups:f.instance_groups,
+    max_rounds:f.max_rounds, keep_top_k:f.keep_top_k, target_score:f.target_score, protect:f.protect,
+    image_id:state.imageChoice==="custom"?f.image_id:"", image_preset:isImagePreset(state.imageChoice)?state.imageChoice:"",
+    subnet_id:f.subnet_id, root_volume_size_gib:f.root_volume_size_gib,
+    root_volume_type:f.root_volume_type, root_volume_encrypted:f.root_volume_encrypted,
+    instance_overrides:f.instance_overrides.slice(0, f.batch_size).map((o,i)=>{
+      const spec={...o}, choice=state.instanceImageChoices[i] || "inherit";
+      if(isImagePreset(choice)){delete spec.image_id;spec.image_preset=choice;}
+      else if(choice==="inherit"){delete spec.image_id;delete spec.image_preset;}
+      else delete spec.image_preset;
+      return spec;
+    }),
+    reputation:{badlist_url:f.badlist_url, require_badlist:f.require_badlist},
+    enable_backends:Object.keys(f.backends).filter(k => f.backends[k]),
+    disable_backends:Object.keys(f.backends).filter(k => !f.backends[k])};
 }
 function planBackends(summary){
   const line = String(summary || "").split("\n").find(l => l.startsWith("backends:"));
   return line ? line.slice("backends:".length).split(",").map(s => s.trim()).filter(Boolean) : [];
 }
-
-// ---------- ① 环境检查 ----------
-async function mountEnv(){
-  $("#content").innerHTML = `<h2>第 1 步 · 环境检查</h2><p class="step-desc">确认本机凭证、Region 与网络前提；有问题会在下方红色列出并阻止进入下一步。</p><div id="env-body"><div class="empty">正在检查环境…</div></div>`;
-  try { if (!state.options) await loadOptions(); } catch(e){ showError("加载可选项失败：" + e.message); }
-  await refreshEnv();
+function mountEnv(){ mountConfig(); }
+function comboMarkup(id, value, placeholder, label){
+  return `<div class="combo" id="${id}-combo"><input id="${id}" value="${esc(value)}" placeholder="${esc(placeholder)}" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-list"><button type="button" class="combo-toggle" aria-label="展开${esc(label)}" tabindex="-1">▾</button><div class="combo-menu" hidden><div class="combo-list" id="${id}-list" role="listbox" aria-label="${esc(label)}"></div><div class="combo-count" role="status"></div></div></div>`;
 }
-async function refreshEnv(){
-  const body = $("#env-body");
-  if (!body) return;
-  body.innerHTML = `<div class="empty">正在检查环境…</div>`;
-  let env;
-  try { env = await api("/api/env?region=" + encodeURIComponent(state.region)); }
-  catch(e){ showError("环境检查失败：" + e.message); body.innerHTML = `<div class="empty">环境检查失败，请重试。</div>`; return; }
-  state.env = env;
-  const regions = state.options ? state.options.regions : [{code: state.region, name: state.region}];
-  const regionOpts = regions.map(r => `<option value="${esc(r.code)}"${r.code === state.region ? " selected" : ""}>${esc(r.code)} · ${esc(r.name)}</option>`).join("");
-  const caller = env.caller ? `${esc(env.caller.account)} · ${esc(env.caller.arn)}` : "不可用";
-  const vpc = env.default_vpc && env.default_vpc.present ? `有（子网 ${env.default_vpc.subnets} 个）` : "无";
-  const quota = env.vcpu_quota == null ? "未知，不阻断" : fmt(env.vcpu_quota);
-  const running = env.running_instances == null ? "未知" : env.running_instances;
-  const winners = (env.winners || []).length
-    ? `<div class="tablewrap"><table><thead><tr><th>instance</th><th>公网 IP</th><th>机型</th><th>分数</th></tr></thead><tbody>${
-        env.winners.map(w => `<tr><td class="mono">${esc(w.instance_id)}</td><td class="mono">${esc(w.public_ip)}</td><td>${esc(w.instance_type)}</td><td>${esc(w.score)}</td></tr>`).join("")
-      }</tbody></table></div>` : `<div class="empty">该 Region 暂无已标记的 winner 实例。</div>`;
-  const problems = (env.problems || []).length
-    ? `<ul class="problems">${env.problems.map(p => `<li>${esc(p)}</li>`).join("")}</ul>` : "";
-  body.innerHTML = `
-    <div class="card">
-      <h3>凭证与 Region</h3>
-      <div class="kv">
-        <div class="k">Region</div><div class="v"><select id="env-region">${regionOpts}</select></div>
-        <div class="k">账号 / ARN</div><div class="v mono">${caller}</div>
-        <div class="k">默认 VPC</div><div class="v">${esc(vpc)}</div>
-        <div class="k">vCPU 配额</div><div class="v">${esc(String(quota))}</div>
-        <div class="k">运行中实例</div><div class="v">${esc(String(running))}</div>
-        <div class="k">config.yaml</div><div class="v">${env.config_yaml_present ? "已加载" : "未提供（用内置默认）"}</div>
-      </div>
-      ${problems}
-    </div>
-    <div class="card"><h3>已有 winner 实例</h3>${winners}</div>
-    <div class="actions">
-      <button class="btn" id="env-recheck" type="button">重新检查</button>
-      <button class="btn primary" id="env-next" type="button"${env.ok ? "" : " disabled"}>下一步：配置参数</button>
-      ${env.ok ? "" : `<span class="pill bad">存在阻断问题，处理后再继续</span>`}
-    </div>`;
-  $("#env-region").addEventListener("change", async e => {
-    state.region = e.target.value; renderNav();
-    try { await loadOptions(); } catch(err){ showError("切换 Region 后加载可选项失败：" + err.message); }
-    refreshEnv();
+function bindCombo(id, getItems, getStatus=()=>({})){
+  const root=$("#"+id+"-combo"), input=$("#"+id), menu=root.querySelector(".combo-menu");
+  const list=root.querySelector(".combo-list"), count=root.querySelector(".combo-count");
+  let matches=[], active=-1, filtering=false;
+  function close(){menu.hidden=true;input.setAttribute("aria-expanded","false");input.removeAttribute("aria-activedescendant");}
+  function highlight(index, scroll=true){
+    active=index;
+    list.querySelectorAll("[role=option]").forEach((el,i)=>{
+      el.classList.toggle("active",i===active);el.setAttribute("aria-selected",String(i===active));
+      if(i===active){input.setAttribute("aria-activedescendant",el.id);if(scroll)el.scrollIntoView({block:"nearest"});}
+    });
+  }
+  function open(filter=false){
+    filtering=filter;
+    const items=getItems(), query=filter ? input.value.trim().toLowerCase() : "";
+    const status=getStatus();
+    matches=items.filter(x=>(x.value+" "+x.detail).toLowerCase().includes(query))
+      .sort((a,b)=>Number(b.value.toLowerCase().startsWith(query))-Number(a.value.toLowerCase().startsWith(query)));
+    const empty=!items.length && status.loading ? "机型列表正在加载，请稍候…" :
+      !items.length && status.error ? "机型列表加载失败，请点击“重新加载机型”。" :
+      !items.length ? "暂无可用选项，可手动输入或重新加载。" : "没有匹配项，可继续手动输入。";
+    list.innerHTML=matches.map((x,i)=>`<div class="combo-option" id="${id}-option-${i}" role="option" aria-selected="false" data-option="${i}"><strong>${esc(x.value)}</strong><small>${esc(x.detail)}</small></div>`).join("") || `<div class="empty">${empty}</div>`;
+    count.textContent=!items.length ? (status.loading ? "正在查询 AWS" : status.error ? "查询未完成" : "没有可选项") :
+      `${matches.length} / ${items.length} 项 · ${status.error || status.loading ? "上次查询结果" : "滚动查看，输入筛选"}`;
+    const rect=root.getBoundingClientRect(), below=window.innerHeight-rect.bottom-16, above=rect.top-16;
+    const upwards=below<200 && above>below;
+    menu.classList.toggle("above",upwards);
+    menu.style.maxHeight=Math.min(360,Math.max(120,upwards?above:below))+"px";
+    menu.hidden=false;input.setAttribute("aria-expanded","true");input.removeAttribute("aria-activedescendant");
+    list.scrollTop=0;highlight(matches.findIndex(x=>x.value===input.value));
+  }
+  function choose(index){
+    if(!matches[index])return;
+    input.value=matches[index].value;
+    input.dispatchEvent(new Event("input",{bubbles:true}));
+    input.dispatchEvent(new Event("change",{bubbles:true}));
+    close();
+  }
+  input.addEventListener("focus",()=>open());
+  input.addEventListener("input",()=>open(true));
+  input.addEventListener("blur",close);
+  root.querySelector(".combo-toggle").addEventListener("mousedown",e=>e.preventDefault());
+  root.querySelector(".combo-toggle").addEventListener("click",()=>{if(menu.hidden){input.focus();open();}else close();});
+  list.addEventListener("mousedown",e=>e.preventDefault());
+  list.addEventListener("click",e=>{const item=e.target.closest("[data-option]");if(item)choose(Number(item.dataset.option));});
+  input.addEventListener("keydown",e=>{
+    if(e.key==="Escape"){close();return;}
+    if(e.key==="ArrowDown" || e.key==="ArrowUp"){
+      e.preventDefault();
+      if(menu.hidden){open();return;}
+      if(matches.length)highlight((active+(e.key==="ArrowDown"?1:-1)+matches.length)%matches.length);
+    }else if(e.key==="Enter" && !menu.hidden && active>=0){e.preventDefault();choose(active);}
   });
-  $("#env-recheck").addEventListener("click", refreshEnv);
-  const next = $("#env-next");
-  if (next && !next.disabled) next.addEventListener("click", () => goStep(2));
+  root.refreshChoices=()=>{if(!menu.hidden)open(filtering);};
 }
-
-// ---------- ② 配置参数 ----------
+function updateTypeInfo(){
+  (state.form.instance_groups || []).forEach((g,i)=>{
+    const t=state.typeSpecs[state.region+"|"+g.instance_type] || (state.options.instance_types || []).find(t=>t.type===g.instance_type), box=$("#type-info-"+i);
+    if(box)box.textContent=t ? typeDescription(t) : state.loading ? "正在加载 AWS 机型…" : state.optionsError ? "机型列表暂不可用，可重新加载或手动输入。" : "可输入机型代号；启动前向 AWS 验证。";
+  });
+}
+const configuredGroups=()=>state.form.instance_groups || [{instance_type:state.form.instance_type,count:state.form.batch_size}];
+const selectedTypes=()=>[...new Set(configuredGroups().map(g=>g.instance_type))];
+const instanceTypes=()=>configuredGroups().flatMap(g=>Array(Math.min(50,Math.max(0,Math.floor(g.count || 0)))).fill(g.instance_type)).slice(0,50);
+const currentImageKey=()=>state.region+"|"+JSON.stringify(selectedTypes());
+const catalogFor=index=>index<0?state.images:(state.images?.by_type?.[instanceTypes()[index]] || state.images);
+const isImagePreset=choice=>typeof choice==="string" && !["auto","inherit","custom"].includes(choice);
+function setImageId(index, value){
+  if(index<0){state.form.image_id=value;return;}
+  while(state.form.instance_overrides.length<=index)state.form.instance_overrides.push({});
+  if(value)state.form.instance_overrides[index].image_id=value;
+  else delete state.form.instance_overrides[index].image_id;
+}
+function syncImageSelections(){
+  if(state.imageStatus!=="ready" || state.imageKey!==currentImageKey())return;
+  [state.imageChoice,...state.instanceImageChoices.slice(0,state.form.batch_size)].forEach((choice,n)=>{
+    const image=(catalogFor(n-1)?.images || []).find(x=>x.key===choice);
+    if(image && isImagePreset(choice))setImageId(n-1,image.image_id);
+  });
+}
+function imageSelectionProblem(){
+  const choices=[state.imageChoice,...state.instanceImageChoices.slice(0,state.form.batch_size)];
+  if(!choices.some(isImagePreset))return "";
+  if(state.imageKey!==currentImageKey() || state.imageStatus==="loading")return "正在查询当前区域和机型的镜像，请稍候。";
+  if(state.imageStatus!=="ready")return "无法确认所选镜像，请重新查询或手动输入 AMI ID。";
+  if(choices.some((key,i)=>isImagePreset(key) && !(catalogFor(i-1)?.images || []).some(x=>x.key===key)))return "所选系统在当前区域或机型中没有可用镜像，请重新选择。";
+  return "";
+}
+function imageMarkup(index){
+  const choice=index<0 ? state.imageChoice : state.instanceImageChoices[index] || "inherit";
+  const id=index<0 ? "image" : "image-"+index;
+  const value=index<0 ? state.form.image_id : (state.form.instance_overrides[index] || {}).image_id || "";
+  const images=catalogFor(index)?.images || [], image=images.find(x=>x.key===choice);
+  const options=[{key:index<0?"auto":"inherit",name:index<0?"自动选择 Amazon Linux 2023":"继承默认镜像"},
+    ...images.map(x=>({key:x.key,name:x.name+" · "+x.architecture})),{key:"custom",name:"手动输入 AMI ID"}];
+  if(isImagePreset(choice) && !image)options.splice(1,0,{key:choice,name:"所选镜像 · "+(state.imageStatus==="loading"?"查询中":"当前不可用")});
+  const detail=image ? `${index<0 && selectedTypes().length>1 ? "按各机型匹配 AMI" : image.image_id} · ${image.architecture}${image.root_volume_size_gib ? " · 系统盘至少 "+image.root_volume_size_gib+" GiB":""}` : "";
+  return `<select id="${id}-preset" data-image-index="${index}" aria-label="${index<0?"默认镜像":"第 "+(index+1)+" 台镜像"}">${options.map(x=>`<option value="${esc(x.key)}"${x.key===choice?" selected":""}>${esc(x.name)}</option>`).join("")}</select>
+    <input id="${index<0?"image-id":id+"-id"}" data-image-custom="${index}" value="${esc(value)}" placeholder="ami-…" aria-label="${index<0?"自定义 AMI ID":"第 "+(index+1)+" 台自定义 AMI ID"}"${choice==="custom"?"":" hidden"}>
+    <p class="image-detail"${detail?"":" hidden"}>${esc(detail)}</p>`;
+}
+function bindImageControls(container){
+  container.querySelectorAll("[data-image-index]").forEach(select=>select.addEventListener("change",e=>{
+    const index=Number(e.target.dataset.imageIndex), choice=e.target.value;
+    if(index<0)state.imageChoice=choice;else state.instanceImageChoices[index]=choice;
+    if(choice==="auto" || choice==="inherit")setImageId(index,"");
+    syncImageSelections();renderImageControls();schedulePlan();
+  }));
+  container.querySelectorAll("[data-image-custom]").forEach(input=>input.addEventListener("input",e=>{
+    setImageId(Number(e.target.dataset.imageCustom),e.target.value.trim());schedulePlan();
+  }));
+}
+function renderImageControls(){
+  const main=$("#image-fields");
+  if(main){main.innerHTML=imageMarkup(-1);bindImageControls(main);}
+  document.querySelectorAll("[data-image-cell]").forEach(cell=>{
+    cell.innerHTML=imageMarkup(Number(cell.dataset.imageCell));bindImageControls(cell);
+  });
+  const status=$("#image-status");
+  if(status){
+    const problem=imageSelectionProblem();
+    status.textContent=problem || (state.imageStatus==="loading" ? "正在查询可选镜像…" :
+      state.images?.error || (state.images?.notes || []).join(" ") ||
+      "镜像按区域和机型架构匹配；自定义镜像需有可用的 SSM Agent。");
+  }
+}
+function requestImages(immediate=false){
+  const key=currentImageKey();
+  if(key===state.imageKey && ["ready","loading"].includes(state.imageStatus)){syncImageSelections();renderImageControls();return;}
+  const seq=++state.imageSeq, region=state.region, types=selectedTypes();
+  clearTimeout(state.imageTimer);state.imageKey=key;state.imageStatus="loading";state.images=null;
+  renderImageControls();
+  state.imageTimer=setTimeout(async()=>{
+    try{
+      if(types.some(type=>!/^[a-z0-9-]+\.[a-z0-9-]+$/.test(type)))throw new Error("请填写清单中的机型代号。");
+      const catalogs=await Promise.all(types.map(type=>api("/api/images?region="+encodeURIComponent(region)+"&instance_type="+encodeURIComponent(type))));
+      if(seq!==state.imageSeq || key!==currentImageKey())return;
+      catalogs.forEach(c=>{
+        if(c.instance_spec)state.typeSpecs[region+"|"+c.instance_type]=c.instance_spec;
+      });
+      state.options.instance_types=(state.options.instance_types || []).map(t=>({...t,...(state.typeSpecs[region+"|"+t.type] || {})}));
+      refreshCatalogView();
+      const images=(catalogs[0]?.images || []).filter(image=>catalogs.every(c=>c.images.some(x=>x.key===image.key))).map(image=>{
+        const matches=catalogs.map(c=>c.images.find(x=>x.key===image.key));
+        return {...image,architecture:[...new Set(matches.map(x=>x.architecture))].join(" / "),
+          root_volume_size_gib:Math.max(...matches.map(x=>x.root_volume_size_gib || 0)) || null};
+      });
+      const data={images,by_type:Object.fromEntries(types.map((type,i)=>[type,catalogs[i]])),
+        error:catalogs.map(c=>c.error).filter(Boolean).join("；"),notes:[...new Set(catalogs.flatMap(c=>c.notes || []))]};
+      state.images=data;state.imageStatus=data.error?"error":"ready";
+      syncImageSelections();renderImageControls();schedulePlan();
+    }catch(e){
+      if(seq!==state.imageSeq || key!==currentImageKey())return;
+      state.images={images:[],error:e.message};state.imageStatus="error";renderImageControls();
+    }
+  },immediate?0:450);
+}
+function syncGroups(){
+  const f=state.form;
+  f.instance_type=f.instance_groups[0].instance_type;
+  f.batch_size=f.instance_groups.reduce((sum,g)=>sum+g.count,0);
+  renderInstanceRows();updateTypeInfo();updateTotal();requestImages();schedulePlan();
+}
+function resizeGroup(index,count){
+  const f=state.form, group=f.instance_groups[index];
+  if(!Number.isInteger(count) || count<1 || count>50)return;
+  while(f.instance_overrides.length<f.batch_size)f.instance_overrides.push({});
+  while(state.instanceImageChoices.length<f.batch_size)state.instanceImageChoices.push("inherit");
+  const start=f.instance_groups.slice(0,index).reduce((n,g)=>n+g.count,0);
+  if(count<group.count){
+    f.instance_overrides.splice(start+count,group.count-count);
+    state.instanceImageChoices.splice(start+count,group.count-count);
+  }else{
+    f.instance_overrides.splice(start+group.count,0,...Array.from({length:count-group.count},()=>({})));
+    state.instanceImageChoices.splice(start+group.count,0,...Array(count-group.count).fill("inherit"));
+  }
+  group.count=count;syncGroups();
+}
+function removeGroup(index){
+  const f=state.form;if(f.instance_groups.length===1)return;
+  const start=f.instance_groups.slice(0,index).reduce((n,g)=>n+g.count,0), count=f.instance_groups[index].count;
+  f.instance_overrides.splice(start,count);state.instanceImageChoices.splice(start,count);
+  f.instance_groups.splice(index,1);renderGroups();syncGroups();
+}
+function renderGroups(){
+  const list=$("#launch-groups");if(!list)return;
+  list.innerHTML=state.form.instance_groups.map((g,i)=>`
+    <div class="launch-row">
+      <div class="field"><label for="group-type-${i}">机型 ${i+1}</label>${comboMarkup("group-type-"+i,g.instance_type,"搜索或输入机型","机型列表")}<p id="type-info-${i}" class="hint"></p></div>
+      <div class="field"><label for="group-count-${i}">每轮启动台数</label><input id="group-count-${i}" type="number" min="1" max="50" required value="${g.count}"></div>
+      <button class="btn remove-group" type="button" data-remove-group="${i}"${state.form.instance_groups.length===1?" disabled":""}>移除</button>
+    </div>`).join("");
+  state.form.instance_groups.forEach((g,i)=>{
+    const input=$("#group-type-"+i);
+    input.required=true;
+    input.addEventListener("input",e=>{g.instance_type=e.target.value.trim();syncGroups();});
+    input.addEventListener("change",refreshCapacity);
+    bindCombo("group-type-"+i,()=>(state.options.instance_types || []).map(t=>({value:t.type,detail:typeDescription(t)})),
+      ()=>({loading:state.loading,error:state.optionsError}));
+    $("#group-count-"+i).addEventListener("input",e=>resizeGroup(i,Number(e.target.value)));
+    $("#group-count-"+i).addEventListener("change",refreshCapacity);
+  });
+  list.querySelectorAll("[data-remove-group]").forEach(b=>b.addEventListener("click",()=>removeGroup(Number(b.dataset.removeGroup))));
+  updateTypeInfo();
+}
+async function reloadOptions(){
+  const region = $("#region-input").value.trim().toLowerCase();
+  if (!region) return;
+  state.region = region; renderNav(); requestImages(true);
+  await loadOptions(true);
+  if(state.step===2)refreshCapacity();
+}
 function mountConfig(){
-  const c = $("#content");
-  if (!state.options){ c.innerHTML = `<div class="empty">可选项未就绪，请先完成环境检查。</div>`; return; }
+  if (!state.options || !state.form) { $("#content").innerHTML = `<div class="empty">正在加载配置…</div>`; return; }
   const f = state.form;
-  const instCards = state.options.instance_types.map(t => `
-    <div class="inst${t.type === f.instance_type ? " sel" : ""}" data-type="${esc(t.type)}">
-      <div class="t">${esc(t.type)}</div>
-      <div class="m">${t.vcpu} vCPU · ${t.memory_gib} GiB · ${esc(t.arch)}</div>
-      <div class="m">${money(t.hourly_usd)}/小时</div>
-    </div>`).join("");
-  const nums = [
-    ["batch_size","每轮候选数","1","50","每轮启动多少台候选实例"],
-    ["max_rounds","最大轮次","1","10","最多探测几轮"],
-    ["keep_top_k","保留数","1","5","保留多台可在结果页最终挑选"],
-    ["target_score","目标分","50","100","某轮最优达到该分即提前停止"],
-  ].map(([k,label,min,max,hint]) => `
-    <div class="numrow">
-      <label for="n-${k}">${esc(label)}</label>
-      <input id="n-${k}" type="number" min="${min}" max="${max}" value="${esc(String(f[k]))}">
-      <span class="hint">${esc(hint)}（${min}～${max}）</span>
-    </div>`).join("");
-  const backs = state.options.backends.map(b => {
-    const disabled = b.needs_key && !b.key_present;
-    return `<div class="chk${disabled ? " off" : ""}">
-      <input id="b-${esc(b.name)}" type="checkbox"${f.backends[b.name] ? " checked" : ""}${disabled ? " disabled" : ""}>
-      <label for="b-${esc(b.name)}"><b>${esc(b.name)}</b>
-        <span class="hint">${esc(b.desc)}${disabled ? "；在 config.yaml 填写 api_key 后可用" : ""}</span></label>
-    </div>`;
-  }).join("");
-  c.innerHTML = `
-    <h2>第 2 步 · 配置参数</h2>
-    <p class="step-desc">选择机型与探测规模；右侧「预估」随输入实时更新。下一步会给出可确认的运行计划。</p>
-    <div class="form-grid">
-      <div>
-        <div class="card"><h3>机型（单选，默认 ${esc((state.options.defaults || {}).instance_type)}）</h3><div class="inst-grid" id="inst-grid">${instCards}</div></div>
-        <div class="card"><h3>规模</h3>${nums}</div>
-        <div class="card"><h3>探测 backend</h3>${backs}
-          <div class="chk"><input id="c-protect" type="checkbox"${f.protect ? " checked" : ""}>
-            <label for="c-protect"><b>protect（加固 winner）</b><span class="hint">选定后才对选定实例开启 API 禁止 stop/terminate；运行阶段不加固任何实例，防止误操作更换公网 IP。</span></label></div>
-        </div>
-        <div class="actions"><button class="btn primary" id="cfg-next" type="button">下一步：确认计划</button></div>
+  $("#content").innerHTML = `
+    <h2>创建与筛选 EC2</h2>
+    <p class="step-desc">配置候选实例，测量后保留得分较高的实例。</p>
+    <div class="card field-grid">
+      <div class="field full"><label for="region-input">AWS 区域</label><div class="inline">${comboMarkup("region-input",state.region,"例如 ap-east-1","区域列表")}<button class="btn" id="reload-options" type="button">重新加载机型</button></div><p class="hint">可选择或输入区域代号；需使用该分区的有效凭证。</p></div>
+      <div class="field full quantity-grid">
+        <div class="field"><label>每轮启动总数</label><output id="batch-total" class="quantity-value"></output><p class="hint">在下方按机型分别设置台数，自动合计。</p></div>
+        <div class="field"><label for="keep-top-k">最终希望保留（台）</label><input id="keep-top-k" type="number" min="1" max="50" required value="${f.keep_top_k}"><p class="hint">所有机型合计，最多 50 台。合格候选不足时会少于目标。</p></div>
+        <div class="field"><label for="max-rounds">最多轮次</label><input id="max-rounds" type="number" min="1" max="10" required value="${f.max_rounds}"><p id="total-info" class="hint"></p></div>
       </div>
-      <div><div class="est" id="est"><div class="empty">正在估算…</div></div></div>
-    </div>`;
-  c.querySelectorAll(".inst").forEach(node => node.addEventListener("click", () => {
-    state.form.instance_type = node.dataset.type;
-    c.querySelectorAll(".inst").forEach(x => x.classList.toggle("sel", x === node));
+      <div class="field full"><p id="catalog-status" class="compact-note catalog-status" role="status"></p><div id="launch-groups"></div><div><button class="btn" id="add-group" type="button">＋ 添加机型</button></div><p id="capacity-info" class="hint">配置后可查询账户配额。</p><div><button class="btn" id="check-capacity" type="button">检查清单配额</button></div></div>
+      <div class="field full"><label for="image-preset">系统镜像</label><div id="image-fields"></div><p id="image-status" class="hint" role="status"></p></div>
+      <div class="field"><label for="volume-size">系统盘容量（GiB）</label><input id="volume-size" type="number" min="1" value="${f.root_volume_size_gib ?? ""}" placeholder="留空使用镜像默认大小"></div>
+      <div class="field"><label for="volume-type">系统盘类型</label><select id="volume-type">${["gp3","gp2","standard"].map(v => `<option${v === f.root_volume_type ? " selected" : ""}>${v}</option>`).join("")}</select><label class="hint"><input style="width:auto" id="volume-encrypted" type="checkbox"${f.root_volume_encrypted ? " checked" : ""}> 加密</label></div>
+    </div>
+    <details class="card" id="per-instance"><summary>逐台设置镜像与系统盘</summary><p class="compact-note">空白表示继承上方配置；同一组配置用于每轮候选。</p><div class="tablewrap"><table><thead><tr><th>候选序号</th><th>系统镜像</th><th>容量（GiB）</th><th>类型</th></tr></thead><tbody id="instance-rows"></tbody></table></div></details>
+    <details class="card"><summary>高级设置</summary><div class="field-grid">
+      <div class="field"><label for="subnet-id">子网 ID</label><input id="subnet-id" value="${esc(f.subnet_id)}" placeholder="留空使用默认 VPC 子网"><p class="hint">填写后点击“重新加载机型”，可按子网所在可用区筛选机型。</p></div>
+      <div class="field"><label for="target-score">提前停止分数</label><input id="target-score" type="number" min="0" max="100" value="${f.target_score}"></div>
+      <div class="field"><label><input id="c-protect" style="width:auto" type="checkbox"${f.protect ? " checked" : ""}> 选定后开启停止和终止保护</label></div>
+      <div class="field full"><label for="badlist-url">GitHub IP 名单（原始文件 URL）</label><input id="badlist-url" value="${esc(f.badlist_url)}"><label class="hint"><input id="require-badlist" style="width:auto" type="checkbox"${f.require_badlist ? " checked" : ""}> 名单查询失败时排除该候选</label></div>
+      <div class="field full"><label>探测源</label>${state.options.backends.map(b => `<label class="hint"><input style="width:auto" id="b-${esc(b.name)}" type="checkbox"${f.backends[b.name] ? " checked" : ""}${b.needs_key && !b.key_present ? " disabled" : ""}> ${esc(b.name)} · ${esc(b.desc)}</label>`).join("")}</div>
+    </div></details>
+    <div id="est"></div><div class="actions"><button class="btn primary" id="cfg-next" type="button">查看启动计划</button></div>`;
+  $("#reload-options").addEventListener("click", reloadOptions);
+  $("#region-input").addEventListener("change", reloadOptions);
+  $("#check-capacity").addEventListener("click", refreshCapacity);
+  $("#add-group").addEventListener("click",()=>{
+    if(f.batch_size>=50){showError("每轮最多启动 50 台，请先减少已有机型的台数。");return;}
+    while(f.instance_overrides.length<f.batch_size)f.instance_overrides.push({});
+    while(state.instanceImageChoices.length<f.batch_size)state.instanceImageChoices.push("inherit");
+    f.instance_groups.push({instance_type:"",count:1});renderGroups();syncGroups();
+    $("#group-type-"+(f.instance_groups.length-1)).focus();
+  });
+  const bindings = {"max-rounds":"max_rounds","volume-size":"root_volume_size_gib","volume-type":"root_volume_type","subnet-id":"subnet_id","keep-top-k":"keep_top_k","target-score":"target_score","badlist-url":"badlist_url"};
+  for (const [id,key] of Object.entries(bindings)) $("#"+id).addEventListener("input", e => {
+    const numeric = ["batch_size","max_rounds","root_volume_size_gib","keep_top_k","target_score"].includes(key);
+    f[key] = numeric ? (e.target.value === "" && key === "root_volume_size_gib" ? null : Number(e.target.value)) : e.target.value.trim();
+    updateTypeInfo(); updateTotal(); schedulePlan();
+  });
+  $("#require-badlist").addEventListener("change",e=>{f.require_badlist=e.target.checked;schedulePlan();});
+  for (const id of ["max-rounds","keep-top-k"]) $("#"+id).addEventListener("change",refreshCapacity);
+  bindCombo("region-input",()=>state.regions.map(r=>({value:r.code,detail:r.partition+(r.status==="not-opted-in"?" · 账户未启用":"")})));
+  $("#volume-encrypted").addEventListener("change", e => { f.root_volume_encrypted=e.target.checked; schedulePlan(); });
+  $("#c-protect").addEventListener("change", e => { f.protect=e.target.checked; schedulePlan(); });
+  for (const b of state.options.backends) $("#b-"+b.name).addEventListener("change", e => { f.backends[b.name]=e.target.checked; schedulePlan(); });
+  $("#cfg-next").addEventListener("click", async () => {
+    const invalid=[...document.querySelectorAll("#content input")].find(input=>!input.checkValidity());
+    if(invalid){
+      let section=invalid.closest("details");while(section){section.open=true;section=section.parentElement.closest("details");}
+      invalid.reportValidity();return;
+    }
+    if (state.loading) { showError("正在加载区域机型，请稍候。"); return; }
+    if ($("#region-input").value.trim().toLowerCase() !== state.region) { await reloadOptions(); return; }
+    const problem=imageSelectionProblem();if(problem){showError(problem);return;}
+    try { state.plan=await post("/api/plan",buildOverrides()); goStep(3); } catch(e){showError(e.message);}
+  });
+  renderGroups();renderInstanceRows(); updateTotal();refreshCatalogView();requestImages(true); schedulePlan();
+}
+function updateTotal(){
+  const f=state.form; if ($("#total-info")) $("#total-info").textContent=`最多启动 ${f.batch_size*f.max_rounds} 台；达到评分目标且保留数量已满足时可提前结束。`;
+  if($("#batch-total"))$("#batch-total").textContent=`${f.batch_size} 台`;
+  if($("#keep-top-k"))$("#keep-top-k").max=String(Math.min(50,Math.max(1,f.batch_size*f.max_rounds)));
+}
+function renderInstanceRows(){
+  const rows=$("#instance-rows"); if(!rows) return;
+  rows.innerHTML=Array.from({length:Math.min(50,Math.max(0,state.form.batch_size))},(_,i)=>{
+    const o=state.form.instance_overrides[i] || {};
+    return `<tr><td>第 ${i+1} 台<div class="hint">${esc(instanceTypes()[i])}</div></td><td class="image-cell" data-image-cell="${i}">${imageMarkup(i)}</td><td><input type="number" min="1" data-index="${i}" data-key="root_volume_size_gib" value="${o.root_volume_size_gib ?? ""}" placeholder="继承" aria-label="第 ${i+1} 台磁盘大小"></td><td><select data-index="${i}" data-key="root_volume_type" aria-label="第 ${i+1} 台磁盘类型">${["","gp3","gp2","standard"].map(v=>`<option value="${v}"${v===(o.root_volume_type || "")?" selected":""}>${v || "继承"}</option>`).join("")}</select></td></tr>`;
+  }).join("");
+  bindImageControls(rows);
+  rows.querySelectorAll("[data-key]").forEach(input=>input.addEventListener("input",e=>{
+    const i=Number(e.target.dataset.index), key=e.target.dataset.key;
+    while(state.form.instance_overrides.length<=i) state.form.instance_overrides.push({});
+    const value=e.target.value.trim();
+    if(value==="") delete state.form.instance_overrides[i][key];
+    else state.form.instance_overrides[i][key]=key==="root_volume_size_gib"?Number(value):value;
     schedulePlan();
   }));
-  ["batch_size","max_rounds","keep_top_k","target_score"].forEach(k => {
-    $("#n-" + k).addEventListener("input", e => {
-      const v = e.target.value === "" ? 0 : Number(e.target.value);
-      state.form[k] = (k === "target_score") ? v : Math.round(v);
-      schedulePlan();
-    });
-  });
-  state.options.backends.forEach(b => {
-    const inp = $("#b-" + b.name);
-    if (inp && !inp.disabled) inp.addEventListener("change", e => { state.form.backends[b.name] = e.target.checked; schedulePlan(); });
-  });
-  $("#c-protect").addEventListener("change", e => { state.form.protect = e.target.checked; schedulePlan(); });
-  $("#cfg-next").addEventListener("click", () => goStep(3));
-  schedulePlan();
 }
-function schedulePlan(){
-  const box = $("#est");
-  if (box) box.innerHTML = `<div class="empty">正在估算…</div>`;
-  clearTimeout(state.planTimer);
-  state.planTimer = setTimeout(refreshPlan, 400);
+async function refreshCapacity(){
+  const data=buildOverrides(), key=JSON.stringify(data), box=$("#capacity-info");
+  if(box) box.textContent="正在查询账户配额…";
+  try {
+    const c=await post("/api/capacity",data);
+    if(key!==JSON.stringify(buildOverrides()) || !$("#capacity-info")) return;
+    $("#capacity-info").textContent=c.problems.length ? c.problems.join("；") :
+      (c.groups || []).map(g=>`${g.group}：本轮 ${g.requested_vcpus} + 跨轮保留最多 ${g.reserved_vcpus} vCPU；已用 ${g.used_vcpus ?? "未知"} / 配额 ${g.vcpu_quota ?? "未知"}`).join("；");
+    if(c.notes.length)$("#capacity-info").textContent+=" "+c.notes.join("；");
+  } catch(e){ if($("#capacity-info")) $("#capacity-info").textContent=e.message; }
 }
+function schedulePlan(){ clearTimeout(state.planTimer); state.planTimer=setTimeout(refreshPlan,400); }
 async function refreshPlan(){
-  let plan;
-  try { plan = await post("/api/plan", buildOverrides()); }
-  catch(e){ const box = $("#est"); if (box) box.innerHTML = `<div class="empty">估算失败：${esc(e.message)}</div>`; return; }
-  state.plan = plan;
-  const box = $("#est");
-  if (!box) return;
-  const backs = planBackends(plan.plan_summary);
-  const count = state.form.batch_size * state.form.max_rounds;
-  box.innerHTML = `
-    <h3 style="margin:0 0 12px;font-size:14px;">预估</h3>
-    <div class="tile accent" style="margin-bottom:10px"><div class="k">估算费用</div><div class="big">${money(plan.estimated_cost_usd)}</div><div class="k">${esc(plan.note || "")}</div></div>
-    <div class="kv" style="grid-template-columns:1fr auto">
-      <div class="k">预计时长</div><div class="v">约 ${esc(String(plan.estimated_minutes))} 分钟</div>
-      <div class="k">将启动候选</div><div class="v">${count} 台（${state.form.batch_size} × ${state.form.max_rounds}）</div>
-      <div class="k">启用 backend</div><div class="v">${backs.length ? esc(backs.join("、")) : "无"}</div>
-    </div>`;
+  const request=buildOverrides(), key=JSON.stringify(request);
+  try {
+    const plan=await post("/api/plan",request);
+    if(key!==JSON.stringify(buildOverrides())) return;
+    state.plan=plan;
+    if($("#est")) $("#est").innerHTML=`<details><summary class="compact-note">时间与费用参考</summary><p class="compact-note">约 ${esc(duration(plan))} 分钟 · ${esc(cost(plan))}。${esc(plan.note)}</p></details>`;
+  } catch(e){ if($("#est")) $("#est").innerHTML=`<p class="compact-note">${esc(e.message)}</p>`; }
 }
-
-// ---------- ③ 确认计划 ----------
+// ---------- 确认 ----------
 async function mountConfirm(){
-  $("#content").innerHTML = `<h2>第 3 步 · 确认计划</h2><p class="step-desc">这是一次 dry-run 预览，确认后才会真正启动实例并产生费用。</p><div id="confirm-body"><div class="empty">正在生成计划…</div></div>`;
+  $("#content").innerHTML=`<h2>确认启动</h2><div class="empty">正在生成计划…</div>`;
   let plan;
-  try { plan = await post("/api/plan", buildOverrides()); }
-  catch(e){ showError("生成计划失败：" + e.message); return; }
-  state.plan = plan;
-  const cfg = plan.config || {};
-  const count = state.form.batch_size * state.form.max_rounds;
-  const sg = cfg.security_group_id || "crossborder-selector-sg";
-  const profile = cfg.instance_profile_name || "crossborder-selector-ssm";
-  const backs = planBackends(plan.plan_summary);
-  $("#confirm-body").innerHTML = `
-    <div class="tiles" style="margin-bottom:16px">
-      <div class="tile accent"><div class="k">将启动候选</div><div class="v">${count} 台</div><div class="k">${state.form.batch_size} × ${state.form.max_rounds}</div></div>
-      <div class="tile"><div class="k">预计时长</div><div class="v small">约 ${esc(String(plan.estimated_minutes))} 分钟</div></div>
-      <div class="tile"><div class="k">估算费用</div><div class="v small">${money(plan.estimated_cost_usd)}</div></div>
-      <div class="tile"><div class="k">启用 backend</div><div class="v small">${backs.length ? esc(backs.join("、")) : "无"}</div></div>
-    </div>
-    <div class="card"><h3>将创建 / 复用</h3><div class="kv">
-      <div class="k">安全组</div><div class="v mono">${esc(sg)}</div>
-      <div class="k">instance profile</div><div class="v mono">${esc(profile)}</div>
-      <div class="k">protect winner</div><div class="v">${cfg.protect ? "是" : "否"}</div>
+  try { plan=await post("/api/plan",buildOverrides()); } catch(e){showError(e.message);return;}
+  const f=state.form, count=f.batch_size*f.max_rounds;
+  state.plan=plan;
+  $("#content").innerHTML=`<h2>确认启动</h2><div class="card"><div class="kv">
+    <div class="k">区域</div><div>${esc(state.region)}</div>
+    <div class="k">每轮机型</div><div>${f.instance_groups.map(g=>`${esc(g.instance_type)} × ${g.count} 台`).join("<br>")}</div>
+    <div class="k">启动数量</div><div>每轮 ${f.batch_size} 台 × 最多 ${f.max_rounds} 轮，共最多 ${count} 台</div>
+    <div class="k">最终希望保留</div><div>${f.keep_top_k} 台（合格候选不足时可能少于目标）</div>
+    <div class="k">默认镜像</div><div>${esc(isImagePreset(state.imageChoice)?({"al2023":"Amazon Linux 2023","ubuntu2404":"Ubuntu 24.04 LTS","ubuntu2204":"Ubuntu 22.04 LTS"}[state.imageChoice]+" · 按机型匹配架构"):(f.image_id || "自动选择 Amazon Linux 2023"))}</div>
+    <div class="k">默认系统盘</div><div>${f.root_volume_size_gib || "镜像默认大小"} ${f.root_volume_size_gib ? "GiB · " : "· "}${esc(f.root_volume_type)} · ${f.root_volume_encrypted ? "加密" : "未加密"}</div>
+    <div class="k">逐台覆盖</div><div>${f.instance_overrides.filter(o=>Object.keys(o).length).length} 台</div>
     </div></div>
-    <div class="card"><h3>dry-run 计划</h3><pre class="summary">${esc(plan.plan_summary)}</pre></div>
-    <div class="card"><h3>权限提示</h3>
-      <p class="step-desc">当前凭证需具备以下日常运行 IAM action（点击展开）。若开始运行时报权限不足，请对照补齐。</p>
-      <details><summary>日常运行 IAM action 清单</summary>
-        <pre class="summary">ec2:RunInstances, ec2:Describe*, ec2:TerminateInstances, ec2:CreateTags, ec2:DeleteTags,
-ec2:CreateSecurityGroup, ec2:ModifyInstanceAttribute,
-iam:CreateRole, iam:AttachRolePolicy, iam:CreateInstanceProfile, iam:AddRoleToInstanceProfile,
-iam:TagRole, iam:TagInstanceProfile, iam:PassRole, iam:Get*,
-ssm:SendCommand, ssm:GetCommandInvocation, ssm:DescribeInstanceInformation, ssm:GetParameters</pre></details></div>
-    <div class="actions">
-      <button class="btn" id="cf-back" type="button">返回修改</button>
-      <button class="btn primary" id="cf-start" type="button">开始运行</button>
-    </div>`;
-  $("#cf-back").addEventListener("click", () => goStep(2));
-  $("#cf-start").addEventListener("click", async () => {
-    const ok = confirm(`将启动 ${count} 台候选实例（${state.form.batch_size} 台 × ${state.form.max_rounds} 轮），${money(plan.estimated_cost_usd)}。确认开始运行？`);
-    if (!ok) return;
-    const btn = $("#cf-start"); btn.disabled = true; btn.textContent = "正在启动…";
-    try {
-      const r = await post("/api/runs", buildOverrides());
-      location.hash = "run=" + r.run_id;
-      startRun(r.run_id, state.form.max_rounds);
-    } catch(e){ showError("启动失败：" + e.message); btn.disabled = false; btn.textContent = "开始运行"; }
+    ${f.instance_overrides.some(o=>Object.keys(o).length) ? `<details class="card" open><summary>逐台配置</summary><pre class="summary">${esc(JSON.stringify(f.instance_overrides,null,2))}</pre></details>` : ""}
+    <p class="step-desc">${state.demo ? "当前为模拟模式。" : "将创建真实 AWS 资源并产生费用。"}筛选结束后，未保留实例会被终止；保留实例继续计费。</p>
+    <details class="card"><summary>探测与资源详情</summary><p class="compact-note">自定义镜像需支持 SSM；启用外部探测时允许公网 ICMP Echo Request 入站。系统盘随实例终止删除。</p><pre class="summary">${esc(plan.plan_summary)}</pre><p class="compact-note">${esc(plan.note)}</p></details>
+    <div class="actions"><button class="btn" id="cf-back" type="button">返回修改</button><button class="btn primary" id="cf-start" type="button">${state.demo ? "开始模拟" : "创建并开始测量"}</button></div>`;
+  $("#cf-back").addEventListener("click",()=>goStep(2));
+  $("#cf-start").addEventListener("click",async()=>{
+    const btn=$("#cf-start");btn.disabled=true;btn.textContent="正在检查并启动…";
+    try { const r=await post("/api/runs",buildOverrides());location.hash="run="+r.run_id;startRun(r.run_id,f.max_rounds); }
+    catch(e){showError("启动失败："+e.message);btn.disabled=false;btn.textContent="重试启动";}
   });
 }
 
 // ---------- ④ 运行中 ----------
 function startRun(id, maxRounds){
+  state.runDetail = null; state.report = null; state.selection = null; state.reached = 4;
   state.runId = id; state.maxRounds = maxRounds || state.maxRounds;
   state.rounds = []; state.logLines = []; state.runStartMs = Date.now(); state.following = true;
   state.runState = "running";
@@ -475,7 +721,7 @@ function startRun(id, maxRounds){
 }
 function mountRunning(){
   $("#content").innerHTML = `
-    <h2>第 4 步 · 运行中</h2>
+    <h2>正在测量</h2>
     <p class="step-desc">运行 <span class="mono">${esc(state.runId || "")}</span>；完成后自动进入结果页。关闭页面不影响后台运行，可从历史记录恢复。</p>
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -490,13 +736,13 @@ function mountRunning(){
     </div>
     <div id="rounds-box"></div>
     <div id="fail-box"></div>
-    <div class="log" id="log"></div>`;
+    <details class="card"><summary>运行日志</summary><div class="log" id="log"></div></details>`;
   const cancelBtn = $("#run-cancel");
   if (state.runState && state.runState !== "running"){
     cancelBtn.hidden = true;  // run 已结束：不再提供「取消运行」
   } else {
     cancelBtn.addEventListener("click", async () => {
-      if (!confirm("确认取消？当前轮结束后停止，已保留的 winner 会留在位。")) return;
+      if (!confirm("确认取消？当前轮结束后停止，已保留的实例会继续运行。")) return;
       try { await post(`/api/runs/${state.runId}/cancel`); setNote("已请求取消，当前轮结束后停止"); }
       catch(e){ showError("取消失败：" + e.message); }
     });
@@ -530,7 +776,7 @@ function applyEvent(ev){
   else if (ev.type === "vetoed"){ roundOf(ev.round).vetoed = ev.items || []; }
   else if (ev.type === "round_done"){ const r = roundOf(ev.round); r.kept = ev.kept || []; r.terminated = (ev.terminated || []).length; r.done = true; }
   else if (ev.type === "finished"){ state.runState = ev.stop_reason === "cancelled" ? "cancelled" : "finished"; onFinished(ev); return; }
-  else if (ev.type === "failed"){ state.runState = "failed"; showFailed(ev.message, ev.leftover_instance_ids || [], ev.winner_instance_ids || []); return; }
+  else if (ev.type === "failed"){ state.runState = "failed"; showFailed(ev.message, ev.leftover_instance_ids ?? null, ev.winner_instance_ids || []); return; }
   if (state.step === 4){ renderRounds(); renderLog(); updateProgress(); }
 }
 function pushLog(m){ if (m == null) return; state.logLines.push(String(m)); if (state.logLines.length > 500) state.logLines = state.logLines.slice(-500); }
@@ -558,7 +804,7 @@ function connectSSE(id){
 }
 function startPolling(id){
   if (state.pollTimer) return;
-  pushLog("[前端] 实时连接中断，改用轮询兜底（每 3 秒）");
+  pushLog("[前端] 实时连接中断，改为每 3 秒查询一次状态");
   if (state.step === 4) renderLog();
   const tick = async () => {
     let d;
@@ -569,7 +815,7 @@ function startPolling(id){
     if (d.state && d.state !== "running"){
       clearInterval(state.pollTimer); state.pollTimer = null;
       state.runState = d.state;
-      if (d.state === "failed") showFailed(d.error, d.leftover_instance_ids || [], (d.winners || []).map(w => w.instance_id));
+      if (d.state === "failed" || d.state === "unknown") showFailed(d.error || "运行状态未知，请查询或清理残留实例。", d.leftover_instance_ids ?? null, (d.winners || []).map(w => w.instance_id));
       else { state.runDetail = d; onFinished({stop_reason:d.stop_reason, winners:d.winners}); }
     }
   };
@@ -590,20 +836,22 @@ function showFailed(message, leftover, winners){
   if (state.step !== 4) goStep(4);
   const box = $("#fail-box"); if (!box) return;
   winners = winners || [];
+  const unknown = leftover == null;
+  const canClean = !!state.runId && (unknown || leftover.length > 0);
   const winnerHtml = winners.length
-    ? `<p style="font-size:13px">已标记为 winner 的实例（报告写入失败但已加固，不受 cleanup 影响）：</p><div class="iplist">${winners.map(esc).join(", ")}</div>`
+    ? `<p style="font-size:13px">已标记为保留的实例（清理会排除这些实例；保护状态需单独核查）：</p><div class="iplist">${winners.map(esc).join(", ")}</div>`
     : "";
   box.innerHTML = `<div class="card" style="border-color:var(--bad)">
     <h3 style="color:var(--bad)">运行失败</h3>
     <p style="font-size:13px">${esc(message || "未知错误")}</p>
     ${winnerHtml}
-    ${leftover.length ? `<p style="font-size:13px">遗留实例（未终止）：</p><div class="iplist">${leftover.map(esc).join(", ")}</div>` : `<p style="font-size:13px">没有检测到遗留实例。</p>`}
-    <div class="actions"><button class="btn danger" id="fail-clean" type="button"${leftover.length ? "" : " disabled"}>立即清理</button>
+    ${unknown ? `<p>尚未确认 AWS 上的残留实例。可按本次运行 ID 查询并清理。</p>` : leftover.length ? `<p style="font-size:13px">遗留实例（未终止）：</p><div class="iplist">${leftover.map(esc).join(", ")}</div>` : `<p style="font-size:13px">查询时没有发现待清理实例。</p>`}
+    <div class="actions"><button class="btn danger" id="fail-clean" type="button"${canClean ? "" : " disabled"}>查询并清理本次候选</button>
       <span id="clean-note" class="pill neutral" hidden></span></div>
   </div>`;
   const btn = $("#fail-clean");
-  if (btn && leftover.length) btn.addEventListener("click", async () => {
-    const targets = leftover.length ? leftover.join("、") : "该 run 下所有带 crossborder-run-id 标签的实例";
+  if (btn && canClean) btn.addEventListener("click", async () => {
+    const targets = !unknown && leftover.length ? leftover.join("、") : "本次运行中未标记为保留的候选实例";
     if (!confirm(`将终止本次运行的遗留实例：${targets}。此操作不可逆，确认清理？`)) return;
     btn.disabled = true; btn.textContent = "清理中…";
     try { const r = await post("/api/cleanup", {run_id: state.runId});
@@ -616,10 +864,13 @@ function showFailed(message, leftover, winners){
 // ---------- ⑤ 结果与选机 ----------
 async function enterResult(id){
   state.runId = id; state.step = 5; state.reached = Math.max(state.reached, 5); renderNav();
-  $("#content").innerHTML = `<h2>第 5 步 · 结果与选机</h2><div class="empty">正在载入报告…</div>`;
+  $("#content").innerHTML = `<h2>选择保留实例</h2><div class="empty">正在载入报告…</div>`;
   try {
-    state.runDetail = await api(`/api/runs/${id}`);
-    state.report = await api(`/api/runs/${id}/report.json`);
+    const detail = await api(`/api/runs/${id}`);
+    const report = await api(`/api/runs/${id}/report.json`);
+    if (state.runId !== id) return;
+    state.runDetail = detail; state.report = report; state.selection = detail.selection || null;
+    renderNav();
   } catch(e){ showError("载入报告失败：" + e.message); $("#content").innerHTML = `<div class="empty">载入报告失败。</div>`; return; }
   mountResult();
 }
@@ -628,12 +879,13 @@ function mountResult(){
   if (!d){ c.innerHTML = `<div class="empty">尚无报告数据。</div>`; return; }
   const winners = d.winners || [];
   const selected = (state.runDetail && state.runDetail.selection) || null;
-  if (selected) state.selection = selected;  // 已选定：让第 ⑥ 步可直接展示
+  state.selection = selected;
+  const terminated = new Set((selected && selected.terminated) || []);
   const tiles = [
     ["停止原因", STOP[d.stop_reason] || d.stop_reason || "—"],
     ["完成轮次", d.rounds_completed],
     ["候选总数", (d.candidates || []).length],
-    ["winner 数", winners.length],
+    ["测量结束时保留数", winners.length],
   ];
   let winnerHtml;
   if (winners.length){
@@ -642,33 +894,34 @@ function mountResult(){
       const isp = ["telecom","unicom","mobile"].map(k => `<span>${ISP_CN[k]}</span>${scoreBar(s[k])}<span class="num">${fmt(s[k])}</span>`).join("");
       return `<div class="win-card${i===0?" top":""}">
         <div class="ip">${esc(w.public_ip)}</div>
-        <div class="meta">${esc(w.instance_id)} · ${esc(w.prefix || "")} · 第 ${fmt(w.round)} 轮</div>
-        <div class="isp">${isp}</div>
+        <p class="compact-note">${esc(badlistSummary(w))}</p><div class="meta">${esc(w.instance_type || "")} · ${esc(w.instance_id)} · ${esc(w.prefix || "")} · 第 ${fmt(w.round)} 轮</div>
+        <details><summary class="compact-note">运营商分项</summary><div class="isp">${isp}</div></details>
         <div style="display:flex;justify-content:space-between;align-items:center">
           <span>综合分 <b>${fmt(w.composite)}</b></span>
           ${selected
-            ? (selected.selected === w.instance_id ? `<span class="pill good">已选定</span>` : `<span class="pill neutral">未选定</span>`)
+            ? (terminated.has(w.instance_id) ? `<span class="pill neutral">已终止</span>` : selected.selected === w.instance_id ? `<span class="pill good">已选定</span>` : `<span class="pill neutral">未选定</span>`)
             : `<button class="btn primary" data-sel="${esc(w.instance_id)}" type="button">选定这台</button>`}
         </div></div>`;
     }).join("")}</div>`;
   } else {
     winnerHtml = `<div class="card"><h3>本次没有合格候选</h3>
-      <p class="step-desc">常见原因：候选 IP 信誉被全部否决，或到大陆三网全部不可达。可回到配置调整机型、增大每轮数量或轮次后重试。</p>
+      <p class="step-desc">请先查看下方检查详情，区分名单命中、探测失败、目标未响应和数据覆盖不足，再调整配置重试。</p>
       <div class="actions"><button class="btn primary" id="res-reconfig" type="button">回到配置重新运行</button></div></div>`;
   }
   const selectedBanner = selected
     ? `<div class="card" style="border-color:var(--accent)"><h3>已选定 ${esc(selected.selected)}</h3>
-        <p class="step-desc">本次 run 已完成选定。如需重选请先手工处理，或开始新一轮筛选。</p>
+        <p class="step-desc">本次运行已记录最终选择。可在完成页查看保护设置和清理结果。</p>
         <div class="actions"><button class="btn primary" id="res-done" type="button">进入完成页</button></div></div>`
     : "";
   c.innerHTML = `
-    <h2>第 5 步 · 结果与选机</h2>
-    <p class="step-desc">从保留的候选中选定一台作为出口机，其余可一并终止。选定为不可逆操作，会二次确认。</p>
+    <h2>选择保留实例</h2>
+    <p class="step-desc">按本次测量比较候选。分数不代表长期质量或业务可用性。选定时可选择终止其他实例；终止操作不可恢复。报告保留测量结束时的快照，后续终止状态单独记录。</p>
     <div class="tiles" style="margin-bottom:18px">${tiles.map(([k,v]) => `<div class="tile"><div class="k">${esc(k)}</div><div class="v small">${esc(String(v == null ? "—" : v))}</div></div>`).join("")}</div>
     ${selectedBanner}
     <section style="margin-bottom:22px"><h2>保留候选</h2>${winnerHtml}</section>
-    <section style="margin-bottom:22px"><h2>全部候选</h2><div class="tablewrap" id="cand-table"></div></section>
-    <section><h2>Prefix 统计（合格候选）</h2><div class="tablewrap" id="pfx-table"></div></section>`;
+    <details class="card"><summary>全部候选</summary><div class="tablewrap" id="cand-table"></div></details>
+    <details class="card"><summary>网段统计</summary><div class="tablewrap" id="pfx-table"></div></details>
+    <details class="card"><summary>探测与信誉详情</summary>${diagnostics(d.candidates || [])}</details>`;
   c.querySelectorAll("[data-sel]").forEach(b => b.addEventListener("click", () => openSelectModal(b.dataset.sel)));
   const rc = $("#res-reconfig"); if (rc) rc.addEventListener("click", () => goStep(2));
   const rd = $("#res-done"); if (rd) rd.addEventListener("click", () => goStep(6));
@@ -680,10 +933,26 @@ function scoreBar(v){
   return `<span class="bar"><i class="${cls}" style="width:${Math.max(0,Math.min(100,v))}%"></i></span>`;
 }
 function statusCell(c){
-  if (c.kept) return `<span class="pill good">winner</span>`;
+  if (state.selection && (state.selection.terminated || []).includes(c.instance_id)) return `<span class="pill neutral">已终止</span>`;
+  if (c.kept) return `<span class="pill good">测量后保留</span>`;
   if (c.qualified === true) return `<span class="pill neutral">合格，未保留</span>`;
   const r = c.veto_reason || "未合格";
   return `<span class="pill bad">${esc(VETO[r] || r)}</span>`;
+}
+function badlistSummary(candidate){
+  const result=(candidate.reputation_results || []).find(r=>r.source === "badlist");
+  if(!result) return "GitHub IP 名单：未记录";
+  return "GitHub IP 名单：" + ({clear:"未命中",listed:"命中，已排除",unknown:"检查失败"}[result.status] || "未知");
+}
+function diagnostics(candidates){
+  const statuses = {clear:"所查名单未命中", listed:"命中信誉名单", unknown:"信誉检查未完成"};
+  return candidates.map(c => `<details class="card"><summary>${esc(c.public_ip)} · ${esc(statuses[c.reputation_status] || "旧报告未记录检查状态")}</summary>
+    ${c.image_id ? `<p>镜像 ${esc(c.image_id)} · 系统盘 ${esc(c.root_volume.VolumeSize)} GiB ${esc(c.root_volume.VolumeType)}</p>` : ""}
+    ${(c.reputation_results || []).map(r => `<p>${esc(r.source === "badlist" ? "GitHub IP 名单" : r.source)}：${esc(statuses[r.status] || r.status)} ${esc(r.detail || "")} ${r.error && r.error !== r.detail ? esc(r.error) : ""}</p>`).join("")}
+    ${(c.probe_results || []).map(pr => `<h4>${esc(pr.backend)}</h4>${pr.error ? `<p>${esc(pr.error)}</p>` : ""}
+      <div class="tablewrap"><table><thead><tr><th>运营商/地区</th><th>目标</th><th>方法</th><th>接收/发送</th><th>丢包率</th><th>平均时延 (ms)</th></tr></thead><tbody>
+      ${(pr.probes || []).map(p => `<tr><td>${esc(ISP_CN[p.isp] || p.isp)}</td><td>${esc(p.target)}</td><td>${esc(p.method)}</td><td>${p.received}/${p.sent}</td><td>${fmt(p.loss * 100)}%</td><td>${fmt(p.mean_rtt_ms)}</td></tr>`).join("")}</tbody></table></div>`).join("")}
+    ${c.probe_results ? "" : "<p>此报告没有保存探测明细。</p>"}</details>`).join("");
 }
 function renderCandTable(){
   const box = $("#cand-table"); if (!box) return;
@@ -692,15 +961,15 @@ function renderCandTable(){
   const cols = [
     {k:"round", label:"轮次", sortable:true, num:true, get:c=>c.round, td:c=>`<td class="num">${fmt(c.round)}</td>`},
     {k:"public_ip", label:"公网 IP", sortable:true, get:c=>c.public_ip, td:c=>`<td class="mono">${esc(c.public_ip)}</td>`},
-    {k:"prefix", label:"prefix", sortable:true, get:c=>c.prefix, td:c=>`<td class="mono">${esc(c.prefix)}</td>`},
+    {k:"prefix", label:"网段（CIDR）", sortable:true, get:c=>c.prefix, td:c=>`<td class="mono">${esc(c.prefix)}</td>`},
     {k:"composite", label:"综合分", sortable:true, num:true, get:c=>c.composite, td:c=>`<td class="num">${c.qualified ? fmt(c.composite) : "—"}</td>`},
     {k:"status", label:"状态", sortable:false, get:()=>null, td:c=>`<td>${statusCell(c)}</td>`},
     {k:"score_telecom", label:"电信分", sortable:true, num:true, get:c=>isp(c).telecom, td:c=>`<td class="num">${fmt(isp(c).telecom)}</td>`},
     {k:"score_unicom", label:"联通分", sortable:true, num:true, get:c=>isp(c).unicom, td:c=>`<td class="num">${fmt(isp(c).unicom)}</td>`},
     {k:"score_mobile", label:"移动分", sortable:true, num:true, get:c=>isp(c).mobile, td:c=>`<td class="num">${fmt(isp(c).mobile)}</td>`},
-    {k:"reverse_telecom", label:"电信 RTT", sortable:true, num:true, get:c=>c.reverse_telecom, td:c=>`<td class="num">${fmt(c.reverse_telecom)}</td>`},
-    {k:"reverse_unicom", label:"联通 RTT", sortable:true, num:true, get:c=>c.reverse_unicom, td:c=>`<td class="num">${fmt(c.reverse_unicom)}</td>`},
-    {k:"reverse_mobile", label:"移动 RTT (ms)", sortable:true, num:true, get:c=>c.reverse_mobile, td:c=>`<td class="num">${fmt(c.reverse_mobile)}</td>`},
+    {k:"reverse_telecom", label:"电信平均时延 (ms)", sortable:true, num:true, get:c=>c.reverse_telecom, td:c=>`<td class="num">${fmt(c.reverse_telecom)}</td>`},
+    {k:"reverse_unicom", label:"联通平均时延 (ms)", sortable:true, num:true, get:c=>c.reverse_unicom, td:c=>`<td class="num">${fmt(c.reverse_unicom)}</td>`},
+    {k:"reverse_mobile", label:"移动平均时延 (ms)", sortable:true, num:true, get:c=>c.reverse_mobile, td:c=>`<td class="num">${fmt(c.reverse_mobile)}</td>`},
   ];
   const s = state.sort;
   const arrow = k => k === s.key ? (s.dir < 0 ? " ▼" : " ▲") : "";
@@ -729,8 +998,8 @@ function renderPfxTable(){
   const box = $("#pfx-table"); if (!box) return;
   const pfx = Object.entries(state.report.prefixes || {}).sort((a,b) => b[1].best_composite - a[1].best_composite);
   const body = pfx.length ? pfx.map(([p,v]) => `<tr><td class="mono">${esc(p)}</td><td class="num">${v.samples}</td><td class="num">${fmt(v.mean_composite)}</td><td class="num">${fmt(v.best_composite)}</td></tr>`).join("")
-    : `<tr><td colspan="4" class="empty">无 prefix 统计</td></tr>`;
-  box.innerHTML = `<table><thead><tr><th>prefix</th><th class="num">样本</th><th class="num">均值</th><th class="num">最高</th></tr></thead><tbody>${body}</tbody></table>`;
+    : `<tr><td colspan="4" class="empty">无网段统计</td></tr>`;
+  box.innerHTML = `<table><thead><tr><th>网段（CIDR）</th><th class="num">样本</th><th class="num">均值</th><th class="num">最高</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 function openSelectModal(instanceId){
   const winners = (state.report.winners || []).map(w => w.instance_id);
@@ -739,12 +1008,12 @@ function openSelectModal(instanceId){
   const root = $("#modal-root");
   root.innerHTML = `<div class="overlay"><div class="modal">
     <h3>选定 ${esc(instanceId)}</h3>
-    <p style="font-size:13px;color:var(--muted)">确认后将把该实例标记为最终 winner。以下为本次其余保留候选：</p>
+    <p style="font-size:13px;color:var(--muted)">确认后将记录该实例为本次最终选择。以下为本次其余保留候选：</p>
     <div class="list">${others.length ? others.map(esc).join("\n") : "（无其它保留候选）"}</div>
     <div class="chk"><input id="m-term" type="checkbox"${others.length ? " checked" : ""}${others.length ? "" : " disabled"}>
       <label for="m-term">终止其余 ${others.length} 台保留候选</label></div>
     <div class="chk"><input id="m-protect" type="checkbox"${defProtect ? " checked" : ""}>
-      <label for="m-protect">对选定实例开启 protect（禁止 API stop/terminate）</label></div>
+      <label for="m-protect">为选定实例开启 API 停止保护和终止保护</label></div>
     <div class="actions" style="justify-content:flex-end">
       <button class="btn" id="m-cancel" type="button">取消</button>
       <button class="btn primary" id="m-ok" type="button">确认选定</button>
@@ -755,7 +1024,7 @@ function openSelectModal(instanceId){
     try {
       const sel = await post(`/api/runs/${state.runId}/select`, {
         instance_id: instanceId, protect: $("#m-protect").checked, terminate_others: $("#m-term").checked });
-      state.selection = sel; root.innerHTML = ""; goStep(6);
+      state.selection = sel; state.runDetail.selection = sel; root.innerHTML = ""; goStep(6);
     } catch(e){ showError("选定失败：" + e.message); btn.disabled = false; btn.textContent = "确认选定"; }
   });
 }
@@ -768,38 +1037,37 @@ function mountDone(){
   const id = state.runId;
   const tags = [`crossborder-winner=true`];
   if (w.composite != null) tags.push(`crossborder-score=${w.composite}`);
-  const cmdStop = `aws ec2 modify-instance-attribute --region ${state.region} --instance-id ${sel.selected} --no-disable-api-stop`;
-  const cmdTerm = `aws ec2 modify-instance-attribute --region ${state.region} --instance-id ${sel.selected} --no-disable-api-termination`;
+  const cmdStop = `aws ec2 modify-instance-attribute --region ${runRegion()} --instance-id ${sel.selected} --no-disable-api-stop`;
+  const cmdTerm = `aws ec2 modify-instance-attribute --region ${runRegion()} --instance-id ${sel.selected} --no-disable-api-termination`;
   const winnerIds = (state.report.winners || []).map(x => x.instance_id);
   const alreadyTerm = new Set(sel.terminated || []);
   const others = winnerIds.filter(x => x !== sel.selected && !alreadyTerm.has(x));
-  const cmdCleanup = `python -m crossborder_selector.cli cleanup --region ${state.region} --run-id ${id}`;
+  const cmdCleanup = `python -m crossborder_selector.cli cleanup --region ${runRegion()} --run-id ${id}`;
   c.innerHTML = `
-    <h2>第 6 步 · 完成</h2>
-    <p class="step-desc">已选定出口实例。请按下方建议接入，并保留报告备查。</p>
+    <h2>已完成选定</h2>
+    <p class="step-desc">已选定实例。请根据业务需要配置应用，并保留测量报告。</p>
     <div class="card"><h3>选定实例</h3><div class="kv">
-      <div class="k">instance</div><div class="v mono">${esc(sel.selected)}</div>
+      <div class="k">实例 ID</div><div class="v mono">${esc(sel.selected)}</div>
       <div class="k">公网 IP</div><div class="v mono">${esc(w.public_ip || "")}</div>
-      <div class="k">prefix</div><div class="v mono">${esc(w.prefix || "")}</div>
+      <div class="k">网段（CIDR）</div><div class="v mono">${esc(w.prefix || "")}</div>
       <div class="k">综合分</div><div class="v">${fmt(w.composite)}</div>
-      <div class="k">protect</div><div class="v">${sel.protected ? "已开启" : "未开启"}</div>
+      <div class="k">停止 / 终止保护</div><div class="v">${sel.protection ? `${sel.protection.stop ? "已开启" : "未开启"} / ${sel.protection.termination ? "已开启" : "未开启"}` : sel.protected ? "旧记录未分别确认，请在 EC2 核查" : "本次未设置"}</div>
       <div class="k">已终止其余</div><div class="v mono">${esc((sel.terminated || []).join(", ")) || "无"}</div>
       <div class="k">标签</div><div class="v"><div class="tags">${tags.map(t => `<span class="pill neutral">${esc(t)}</span>`).join("")}</div></div>
     </div></div>
-    <div class="card"><h3>接入建议</h3><ul class="notes">
-      <li>不要 stop 这台实例：stop/start 会更换公网 IPv4，reboot 不会。</li>
-      <li>只让它承担代理 / 出口用途，不要在上面跑其它业务。</li>
-      <li>它已移除 run-id 标签并标记 crossborder-winner=true，cleanup 不会终止它。</li>
-      <li>如需解除 protect（先解 stop 再解 terminate）：</li>
+    <details class="card"><summary>实例使用与保护设置</summary><ul class="notes">
+      <li>如需保留自动分配的公网 IPv4，应保持实例运行；停止后再启动通常会分配新 IP，重启通常保留 IP。</li>
+      <li>工具仅完成实例筛选；业务部署、服务端口与访问控制需另行配置。</li>
+      <li>它保留运行归属标签并标记 crossborder-winner=true，按运行 ID 清理会排除该实例。</li>
+      <li>如需解除保护，以下两条命令分别关闭 API 停止保护和终止保护：</li>
     </ul>
-    <pre class="cmd">${esc(cmdStop)}\n${esc(cmdTerm)}</pre></div>
+    <pre class="cmd">${esc(cmdStop)}\n${esc(cmdTerm)}</pre></details>
     <div class="card"><h3>清理其余保留候选</h3>
       <p class="step-desc">${others.length ? `本次仍保留 ${others.length} 台其余候选，可一并终止：` : "没有需要清理的其余保留候选。"}</p>
       ${others.length ? `<div class="iplist">${others.map(esc).join("、")}</div>` : ""}
       <div class="actions">${others.length ? `<button class="btn danger" id="done-term" type="button">终止其余保留候选</button>` : ""}
         <span id="term-note" class="pill neutral" hidden></span></div>
-      <p class="step-desc" style="margin-top:12px">或用命令行按 run-id 清理本 run 的全部候选（已标记 winner 的实例不受影响）：</p>
-      <pre class="cmd">${esc(cmdCleanup)}</pre></div>
+      <details><summary class="compact-note">清理临时候选的命令</summary><p class="compact-note">此命令排除已标记为保留的实例。</p><pre class="cmd">${esc(cmdCleanup)}</pre></details></div>
     <div class="card"><h3>下载报告</h3><div class="actions" style="margin-top:0">
       <a class="btn" href="/api/runs/${encodeURIComponent(id)}/report.json" download>report.json</a>
       <a class="btn" href="/api/runs/${encodeURIComponent(id)}/report.md" download>report.md</a>
@@ -817,6 +1085,9 @@ function mountDone(){
     dt.disabled = true; dt.textContent = "终止中…";
     try {
       const r = await post(`/api/runs/${id}/terminate_others`, {});
+      state.selection = r.selection;
+      state.runDetail.selection = r.selection;
+      mountDone();
       const note = $("#term-note"); note.hidden = false;
       note.textContent = `已终止 ${r.terminated.length} 台：${r.terminated.join(", ") || "无"}`;
       dt.hidden = true;
@@ -838,7 +1109,7 @@ async function refreshHistory(){
     return `<div class="run-item${r.run_id === state.runId ? " cur" : ""}" data-run="${esc(r.run_id)}" data-state="${esc(r.state)}">
       <div class="rid">${esc(r.run_id)}</div>
       <div class="sub"><span class="pill ${pillClass[r.state] || "neutral"}">${esc(pillText[r.state] || r.state)}</span>
-        <span>${esc(r.region || "")}</span><span>winner ${nw}</span></div></div>`;
+        <span>${esc(r.region || "")}</span><span>测量结束时保留 ${nw} 台</span></div></div>`;
   }).join("");
   list.querySelectorAll(".run-item").forEach(item => item.addEventListener("click", () => openRun(item.dataset.run, item.dataset.state)));
 }
@@ -846,7 +1117,7 @@ async function openRun(id, knownState){
   clearError(); closeStreams();
   let d;
   try { d = await api(`/api/runs/${id}`); } catch(e){ showError("载入运行失败：" + e.message); return; }
-  state.runId = id; state.runDetail = d; location.hash = "run=" + id;
+  state.runId = id; state.runDetail = d; state.report = null; state.selection = d.selection || null; location.hash = "run=" + id;
   const st = d.state || knownState;
   state.runState = st;
   if (st === "running"){
@@ -855,11 +1126,11 @@ async function openRun(id, knownState){
     (d.events || []).forEach(applyEventQuiet);
     goStep(4); connectSSE(id);
   } else if (st === "failed"){
-    goStep(4); showFailed(d.error, d.leftover_instance_ids || [], (d.winners || []).map(w => w.instance_id));
+    goStep(4); showFailed(d.error, d.leftover_instance_ids ?? null, (d.winners || []).map(w => w.instance_id));
   } else if (st === "unknown"){
     showError("该运行状态未知（服务可能重启过）。如担心有遗留实例，请对其执行清理。");
     try { state.report = await api(`/api/runs/${id}/report.json`); enterResult(id); }
-    catch(_){ goStep(4); showFailed("服务重启后无法确认该运行状态。", []); }
+    catch(_){ goStep(4); showFailed("服务重启后无法确认该运行状态。", null); }
   } else {
     enterResult(id);
   }
@@ -867,19 +1138,24 @@ async function openRun(id, knownState){
 
 // ---------- 初始化 ----------
 async function init(){
-  try { const meta = await api("/api/meta"); state.demo = !!meta.demo; if (state.demo) $("#demo-banner").hidden = false; }
-  catch(e){ /* meta 失败不阻断 */ }
-  renderNav();
-  try { await loadOptions(); } catch(e){ showError("加载可选项失败：" + e.message); }
-  await refreshHistory();
-  setInterval(refreshHistory, 10000);
-  const m = location.hash.match(/run=([A-Za-z0-9._-]+)/);
-  if (m){ openRun(m[1]); return; }
-  let runs = [];
-  try { runs = await api("/api/runs"); } catch(_){}
-  const running = runs.find(r => r.state === "running");
-  if (running){ openRun(running.run_id, "running"); return; }
-  goStep(1);
+  try {
+    const meta=await api("/api/meta");
+    state.regions=meta.regions || []; state.region=meta.default_region || state.region; state.demo=!!meta.demo;
+    state.options={defaults:meta.defaults,backends:meta.backends,instance_types:[],errors:[]};initForm();
+    if(state.demo) $("#demo-banner").hidden=false;
+    if(meta.allow_remote) $("#service-note").textContent="已启用远程访问；服务没有身份认证。";
+  } catch(e){showError("无法读取配置："+e.message);return;}
+  goStep(2);
+  loadOptions().then(()=>{if(state.step===2)refreshCapacity();});
+  api("/api/regions").then(data=>{
+    state.regions=data.regions || state.regions;
+  }).catch(()=>{});
+  await refreshHistory();setInterval(refreshHistory,10000);
+  const m=location.hash.match(/run=([A-Za-z0-9-]+)/);
+  if(m){openRun(m[1]);return;}
+  let runs=[];try{runs=await api("/api/runs");}catch(_){}
+  const running=runs.find(r=>r.state==="running");
+  if(running) openRun(running.run_id,"running");
 }
 window.addEventListener("DOMContentLoaded", init);
 </script>

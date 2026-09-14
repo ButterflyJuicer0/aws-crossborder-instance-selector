@@ -29,7 +29,7 @@ def backend_score(isp_scores: dict, isp_weights: dict) -> float:
         return 0.0
     if set(isp_scores) <= set(ISPS):
         total = sum(isp_weights[i] for i in isp_scores)
-        return sum(isp_scores[i] * isp_weights[i] for i in isp_scores) / total
+        return sum(isp_scores[i] * isp_weights[i] for i in isp_scores) / total if total else 0.0
     return mean(isp_scores.values())
 
 
@@ -53,10 +53,16 @@ def score_candidate(candidate, reputation, probe_results, weights, min_backends,
         veto = "reputation"
     elif reverse_enabled:
         rev = next((pr for pr in probe_results if pr.backend == "reverse"), None)
-        if rev is not None and rev.ok and all(p.received == 0 for p in rev.probes):
+        if rev is None or not rev.ok:
+            veto = "reverse_unavailable"
+        elif not set(ISPS) <= {p.isp for p in rev.probes}:
+            veto = "reverse_incomplete"
+        elif all(p.received == 0 for p in rev.probes):
             veto = "reverse_unreachable"
     if not veto and len(valid) < min_backends:
         veto = "min_backends"
+    if not veto and not any(p.received > 0 for pr in valid for p in pr.probes):
+        veto = "unreachable"
 
     return CandidateScore(candidate=candidate, reputation=reputation, probe_results=probe_results,
                           isp_scores=isp_scores, backend_scores=backend_scores,

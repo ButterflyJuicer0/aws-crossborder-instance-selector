@@ -1,147 +1,148 @@
-# 操作手册（MANUAL）
+# 操作手册
 
-按下列顺序操作即可完成从安装到交付的完整流程。
-
-## 1. 安装
+## 安装与配置
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt && pytest -q
-```
-
-`pytest -q` 应全部通过（当前 128 个）；测试用 moto 模拟 EC2/IAM/SSM，不产生真实资源、不需 AWS 凭证。更完整的测试说明见 [TESTING.md](TESTING.md)。
-
-## 2. 配置
-
-```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
 cp config.example.yaml config.yaml
 ```
 
-逐字段说明（完整默认值见 `config.example.yaml`）：
+先设置区域、机型和探测规模。没有默认 VPC 时提供 `subnet_id`；自定义安全组必须与子网属于同一 VPC。外部 ping 需要 IPv4 ICMP Echo Request 入站规则，详见 [README](README.md#探测源与网络要求)。
 
-- `region`：目标区域，默认 `ap-east-1`（香港）。
-- `instance_type`：候选机型，默认 `t3.nano`；arm 机型自动选用 arm64 AMI。
-- `batch_size` / `max_rounds` / `keep_top_k`：每轮候选数 / 最大轮次 / 全局保留数。
-- `target_score`：综合分达到即提前停止（默认 90）。
-- `subnet_id` / `security_group_id`：仅当目标 Region 没有默认 VPC 时必填，否则留空自动准备。
-- `backends.*.enabled`：各拨测源开关；`ripeatlas.api_key` 留空则跳过，`itdog` 默认关闭。
-- `reputation.abuseipdb_api_key`：留空则跳过 AbuseIPDB，其余信誉源仍生效。
+CLI 参数覆盖配置文件中的对应值。包装脚本默认填入数量和轮次；希望完整使用文件配置时，可直接运行 `.venv/bin/python -m crossborder_selector.cli select --config config.yaml`。
 
-## 3. Dry-run（不创建任何资源）
+## 查看计划
 
 ```bash
 scripts/find_best_instance.sh ap-east-1 2 1 1 --dry-run
 ```
 
-逐行含义：
+dry-run 只读取配置和生成文本，不访问 AWS，也不会核验凭证、权限、配额或网络。检查区域、实例数量、探测源、目标地址和入站要求后再真实运行。
 
-- `DRY-RUN run-id=...`：本次生成的 run-id，格式 `xb-<UTC 时间>-<4 位十六进制>`。
-- `region=`：目标区域。
-- `per round:`：每轮启动的实例数与机型、最大轮次、保留数、目标分。
-- `infra:`：将复用或创建的子网、安全组 `crossborder-selector-sg`、实例配置 `crossborder-selector-ssm`、AMI。
-- `backends:`：本次启用的拨测源。
-- `protect winner:`：是否对 winner 开启停止/终止保护（`--protect` 决定）。
-- `reverse targets:`：三网回程探测目标。
-- `No AWS resources will be created.`：确认 dry-run 不动云资源。
-
-## 4. 冒烟测试
+## 小规模真实运行
 
 ```bash
 scripts/find_best_instance.sh ap-east-1 2 1 1
 ```
 
-预期 5～8 分钟完成。结束后：
+记录输出的 `run-id`。完成后检查 `out/<run-id>/report.md` 和 `report.json`：候选总数、保留实例、停止原因、每个探测源的丢包率与错误，以及信誉检查是否完成。
 
-- 阅读 `out/<run-id>/report.md`：winners 表给出 instance id、IP、prefix、综合分与三网分；另有每轮淘汰概览与备注。
-- 在 EC2 控制台按标签 `crossborder-winner=true` 过滤，确认只剩 1 台候选实例存活，其余已终止。
+运行时间随实例启动、SSM、信誉服务和探测源响应变化。未达到目标分时仍可能保留满足最低测量要求的实例；得分最高不等于满足业务要求。
 
-## 5. 正式运行
+## 自定义镜像和系统盘
+
+```bash
+.venv/bin/python -m crossborder_selector.cli select --region ap-east-1 \
+  --batch-size 2 --max-rounds 1 --root-volume-size-gib 30 --root-volume-type gp3
+```
+
+指定镜像可增加 `--image-id <ami-id>`；逐台覆盖通过网页或 `config.yaml` 的 `instance_overrides` 配置。自定义 AMI 必须属于所选区域、架构匹配且根卷容量满足要求。高级设置中的子网必须有出网路径。
+
+## 多轮运行与保护
 
 ```bash
 scripts/find_best_instance.sh ap-east-1 20 3 1 --protect
 ```
 
-`--protect` 会为 winner 开启停止/终止保护。运行中按 Ctrl-C 会中断：进程以退出码 130 结束，并在 stderr 打印残留候选机的 instance id，然后用打印出的 run-id 清理：
+需要为本轮候选和上一轮保留实例同时预留配额。`--protect` 在 CLI 筛选结束后启用停止和终止保护。任一保护设置失败会报告错误，不表示两项均已成功。
+
+Ctrl-C 中断时退出码为 130，按输出的运行 ID 清理未保留实例。强制终止进程或清理 API 失败可能留下资源。
+
+## Web 向导
 
 ```bash
-python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
-```
-
-## 6. 用 Web 向导运行
-
-与命令行并列的另一条路径。本地 Web 向导按步骤引导完成同一套选机流程，适合交付演示或不熟悉 CLI 参数的场景。
-
-启动：
-
-```bash
-scripts/start_web.sh                              # 默认 http://127.0.0.1:8765，自动打开浏览器
-scripts/start_web.sh --port 8792 --no-browser     # 换端口、不自动打开浏览器
-```
-
-底层等价于 `python -m crossborder_selector.web`，可用参数为 `--host`、`--port`、`--output-dir`、`--config`、`--demo`、`--no-browser`、`--allow-remote`。服务默认只监听 127.0.0.1，使用本机 AWS 凭证，不做登录认证。
-
-`--host` 若指定非回环地址（非 127.0.0.1/localhost/::1），必须同时加 `--allow-remote`，否则直接退出（退出码 2）。这是有意的安全护栏：服务无认证，任何能访问该端口的人都能启动/终止实例，确需远程访问时请自行在网络层限制来源。未加 `--allow-remote` 时，非回环 `Host` 的任意请求、以及跨站 `Origin` 的 POST 都会被拒绝。
-
-六步流程：
-
-1. 环境检查：显示凭证身份、默认 VPC、vCPU 配额与该 Region 已有 winner；存在阻断问题时「下一步」禁用。
-2. 配置参数：选机型、每轮候选数、轮次、保留数、backend 与 protect，右侧实时估算成本与时长。
-3. 确认计划：一次 dry-run 预览，确认后才启动实例并产生费用。
-4. 运行中：进度条、实时日志、每轮候选/否决/保留经 Server-Sent Events 推送。
-5. 结果与选机：并排比较保留候选的综合分与三网分，选定一台作为出口机。
-6. 完成：显示选定实例、标签、接入建议，并提供 report.json/md/csv 下载。
-
-取消与失败清理：
-
-- 运行中点「取消运行」，当前轮结束后停止，已保留的 winner 留在位，`stop_reason` 记为 `cancelled`。
-- run 线程异常时状态转为 `failed`，界面列出遗留实例并提供「立即清理」按钮，等价于对该 run-id 执行 cleanup。
-
-历史运行：右侧常驻侧栏读取 `out/*/status.json` 与报告文件，列出各 run 的状态与 winner，点击可回到该 run 的结果页。服务重启后运行中的线程随旧进程结束，重启前状态仍为 running 的记录标为 `unknown`，界面提示对该 run-id 执行清理以确认没有遗留实例。
-
-演示模式：
-
-```bash
+scripts/start_web.sh
 scripts/start_web.sh --demo
+scripts/start_web.sh --port 8792 --no-browser
 ```
 
-不接触 AWS。环境检查返回固定的成功结果，运行用模拟数据按真实事件顺序走完六步，并写出真实格式的报告到 `out/`。界面顶部显示醒目的演示模式标记，用于无凭证环境向客户演示。
+默认地址为 `http://127.0.0.1:8765`。模拟模式不调用 AWS，适合先检查页面和操作流程。真实模式使用本机 AWS 凭证。
 
-## 7. 启用可选 backend
+环境检查允许先确认基本前提、再调整规模。点击开始时，按最终配置再次检查 vCPU 配额，包括已知占用和跨轮保留实例。未知占用或配额不等于资源一定可用。机型即使在列表中，也可能因为容量、AMI、权限或专用主机要求而无法启动。
 
-- ripeatlas：在 `config.yaml` 的 `backends.ripeatlas` 填 `api_key` 并保证账户有 credits（申请见 https://atlas.ripe.net/docs/getting-started/credits ），填好后自动启用。RIPE Atlas 的 one-off 测量结果通常要数分钟才齐，默认 `timeout_s: 120` 可能只拿到部分探针结果；需要更完整覆盖时调大该值。
-- itdog：`scripts/find_best_instance.sh ap-east-1 20 3 1 --enable-backend itdog`。itdog 为非官方 WebSocket 接口，随时可能失效，失败只降级不阻塞本轮。
+在配置页选择或手动输入区域代号，再从 AWS 机型列表搜索机型。名称先加载，选中后查询规格。区域和机型列表可滚动；输入文字筛选，方向键选择、Enter 确认，Escape 收起。若列表加载失败，点击“重新加载机型”重试；刷新不会清除已填写的机型、台数和保留数量。
 
-## 8. 清理
+点击“添加机型”可增加多行，每行分别选择机型并设置“每轮启动台数”。主表单中的“每轮启动总数”自动合计，“最终希望保留”可独立设置为 1–50 台，且不能超过每轮总数乘最多轮次。例如每轮 6 台、最多 2 轮、希望保留 7 台，会从最多 12 台候选中选取 7 台；合格候选不足时可能少于 7 台。达到评分目标但数量不足时会继续后续轮次。
+
+“检查清单配额”按所有行合计用量，每轮总数最多 50 台。逐台配置按机型行顺序展开；调整前一行数量不会将后一行已有的镜像和磁盘设置移给其他机型。
+
+“系统镜像”提供按区域和架构匹配的 Amazon Linux 2023、Ubuntu 24.04 LTS、Ubuntu 22.04 LTS；选择后显示真实 AMI ID 和最小系统盘容量。其他镜像选择“手动输入 AMI ID”。默认镜像和系统盘设置适用于每台实例；需要差异时展开“逐台设置镜像与系统盘”，每台也可选择常用系统。Python 调用见 [Python 使用方法](docs/python-api.md)。
+
+选定实例时可分别决定是否启用保护、是否终止其他保留实例。Web 的保护在人工选定时设置。终止实例不可恢复；操作结果会写入 `selection.json`，刷新后仍可查看。
+
+取消请求在轮次边界生效。浏览器关闭后服务仍可运行；服务进程退出后，未完成运行在历史中显示“状态未知”。点击“查询并清理本次候选”按运行 ID 查询 AWS 并清理未标记为保留的实例。
+
+`--host <address> --allow-remote` 可启用远程访问。服务没有身份认证，应限制网络来源；同源 POST 的协议、主机和端口必须一致。`--allow-remote` 不等于关闭跨站检查。
+
+## 启用可选探测源
+
+RIPE Atlas 需要 API key 和 credits，并显式启用：
+
+```yaml
+backends:
+  ripeatlas:
+    enabled: true
+    api_key: '<your-key>'
+```
+
+也可先配置 key，再使用 `--enable-backend ripeatlas`。仅填写 key 不会自动启用。一次性测量的结果可能延迟到达；`timeout_s` 决定等待窗口，部分结果需结合覆盖范围判断。
 
 ```bash
-python -m crossborder_selector.cli cleanup --region ap-east-1 --run-id <run-id>
+scripts/find_best_instance.sh ap-east-1 2 1 1 --enable-backend itdog
 ```
 
-默认只终止带该 run-id 的候选机，保留共享的 SG 与实例配置（winner 依赖）。加 `--include-infra` 会连同删除 `crossborder-selector-sg` 与 `crossborder-selector-ssm`；前提是当前没有任何 `crossborder-winner=true` 实例，否则工具拒绝删除。
+itdog 使用非官方接口。HTTP 请求具有连接和读取超时；WebSocket 短暂空闲会继续等待至收集窗口结束。错误会记录到报告，其他探测源可继续提供数据。
 
-## 9. 故障排查
+## 清理
 
-| 现象 | 排查 |
+```bash
+.venv/bin/python -m crossborder_selector.cli cleanup --region <region> --run-id <run-id>
+```
+
+清理识别本次运行归属，并排除 `crossborder-winner=true` 的实例。新版本的保留实例也保留运行 ID 标签，因此不能用“按运行 ID 查询是否为空”判断清理是否完成。
+
+```bash
+# 额外删除当前区域的受管安全组，共享 IAM 默认保留
+.venv/bin/python -m crossborder_selector.cli cleanup --region <region> --run-id <run-id> --include-infra
+
+# 仅在确认不再需要共享资源时使用；工具检查所有已启用区域及 IAM 所有权
+.venv/bin/python -m crossborder_selector.cli cleanup --region <region> --run-id <run-id> --include-infra --include-iam
+```
+
+若存在保留实例，工具拒绝基础设施清理。安全组仍被正在关闭的实例引用时，等待后重试。其他区域仍有实例依赖、存在其他实例配置依赖、所有权不符或查询失败时，IAM 资源不会删除。清理共享资源期间不要并行开始新的运行。
+
+Web 已保留但最终未选定的实例，应使用“终止其余保留候选”；普通 cleanup 会排除这些实例。
+
+## 排查
+
+| 现象 | 检查内容 |
 |---|---|
-| 候选机 SSM 一直不 online | 确认实例配置 `crossborder-selector-ssm` 已附加、使用 AL2023 AMI、子网可出网（NAT/公网）|
-| `InvalidParameterValue`（关联实例配置） | 新建 IAM role 传播延迟，等待后自动重试；持续失败可稍后重跑 |
-| RunInstances 配额/容量不足 | 本轮自动缩批并在报告标注；提升该 Region vCPU 配额或减小 `batch_size` |
-| ip-ranges 下载失败 | prefix 置空、流程继续；检查网络或稍后重试 |
-| 所有候选 `reverse_unreachable` | 探测目标被封或 ICMP 限速，更换 `backends.reverse.targets` 中的三网目标 |
-| 每次都 `no_qualified`（信誉全否决） | 使用公共递归 DNS 时 Spamhaus 会对每次查询返回 `127.255.255.254`（经开放递归）或 `127.255.255.255`（被限速），本工具已将其识别为源错误、不计命中；若报告里 dnsbl detail 为 `error:...`，请改用本机/VPC 解析器，或在 `reputation.dnsbl_zones` 换用不受此限的 zone |
-| globalping 报错 429 / 频繁失败 | 公共 API 匿名限速约 250 tests/h，批量或多轮容易触顶。在 `backends.globalping.api_token` 填入 token 提升到约 500 tests/h，或减小 `batch_size`/`limit_per_location` |
-| RIPE Atlas 结果偏少 | one-off 测量需数分钟才齐，默认 `timeout_s: 120` 内可能只回部分探针；调大 `backends.ripeatlas.timeout_s` |
-| `cleanup --include-infra` 报 `DependencyViolation` | SG 仍被运行中的实例（含 winner 或其他 run）占用；先终止相关实例再删，工具会将该错误转为 `RuntimeError` 提示 |
-| Web 向导端口被占用（启动报 `Address already in use`）| 用 `scripts/start_web.sh --port <其它端口>` 换端口，例如 `--port 8792` |
-| Web 向导页面打不开 | 服务只绑定 127.0.0.1，须在运行服务的本机浏览器访问；不支持从其它机器远程访问 |
-| 历史运行里某个 run 显示「状态未知」（unknown）| 服务重启过，该 run 线程已随旧进程结束；对该 run-id 执行 `cleanup --run-id <run-id>` 确认没有遗留候选机 |
+| `reverse_unavailable` | SSM 注册状态、实例角色、出网路径和报告中的具体错误 |
+| `reverse_incomplete` | 反向探测是否返回全部配置运营商的样本 |
+| `reverse_unreachable` / `unreachable` | 配置目标是否响应，外部探测的安全组、网络 ACL 和路由是否允许；不要直接认定整个运营商网络不可达 |
+| `min_backends` | 有效探测源数量、API 错误和结果覆盖 |
+| `reputation_unavailable` | GitHub 原始名单下载或解析失败；核查 URL 和错误详情，默认不保留这类候选 |
+| 信誉 `unknown` | JSON 中 `reputation_results` 的 error/detail；区分 DNS 超时、SERVFAIL 和名单提供方错误码 |
+| 信誉 `listed` | 检查实际命中的源和名单；不是查询失败 |
+| Globalping 429 | 查询提供方当前限额，减少数量或配置有可用额度的 token |
+| RIPE Atlas 未启用 | 同时检查 enabled 与 api_key |
+| RunInstances 配额/容量错误 | 工具不针对这类错误主动缩批重试；减少规模或处理配额/容量后重新运行 |
+| 保护设置失败 | 在 EC2 检查停止与终止保护各自状态；修复权限后重试 |
+| Web 状态未知 | 未完成残留查询不代表没有实例；使用按运行 ID 清理功能 |
+| 报告写入失败 | 检查输出目录与磁盘；先核对已标记的保留实例和残留候选 |
 
-## 10. 把 winner 交给生产
+## 使用保留实例
 
-- 不要 `stop`：stop/start 会更换公网 IP，reboot 才保留。
-- 建议 winner 只跑 Nginx / HAProxy / 代理转发，真实业务放在后端，降低单实例风险。
-- 交付前可删除标签或解除保护：
-  ```bash
-  aws ec2 delete-tags --resources <id> --tags Key=crossborder-winner
-  aws ec2 modify-instance-attribute --instance-id <id> --no-disable-api-termination
-  aws ec2 modify-instance-attribute --instance-id <id> --no-disable-api-stop
-  ```
+自动分配的公网 IPv4 不能迁移为 EIP。stop/start 会更换地址；reboot 通常保留。实例内发起关机设为 stop，API 保护不阻止这种关机。
+
+部署业务前另行配置应用、服务端口和访问控制。工具的网络分数不能替代真实业务测试或持续监控。
+
+```bash
+# 如需解除保护，使用该实例实际所属区域
+aws ec2 modify-instance-attribute --region <region> --instance-id <id> --no-disable-api-stop
+aws ec2 modify-instance-attribute --region <region> --instance-id <id> --no-disable-api-termination
+```
+
+删除 `crossborder-winner` 标签会改变普通 cleanup 对该实例的处理：仍有运行归属标签的实例将重新成为可清理对象。不要仅为整理标签而删除该保留标记。

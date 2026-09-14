@@ -19,7 +19,7 @@ def main(argv=None) -> int:
     p.add_argument("--demo", action="store_true", help="演示模式：不接触 AWS，用模拟数据走完整流程")
     p.add_argument("--no-browser", action="store_true")
     p.add_argument("--allow-remote", action="store_true",
-                   help="允许绑定非回环地址；服务无认证，风险自负")
+                   help="允许绑定非回环地址；服务没有身份认证，访问者能够操作实例")
     a = p.parse_args(argv)
     if a.host not in ("127.0.0.1", "localhost", "::1"):
         if not a.allow_remote:
@@ -32,7 +32,7 @@ def main(argv=None) -> int:
     if a.demo:
         install_demo(mgr)
     server = make_server(a.host, a.port, api, mgr, demo=a.demo, allow_remote=a.allow_remote)
-    url = f"http://{a.host}:{server.server_address[1]}"
+    url = f"http://{'[' + a.host + ']' if ':' in a.host else a.host}:{server.server_address[1]}"
     print(f"Web 向导：{url}" + ("（演示模式，不接触 AWS）" if a.demo else ""))
     if not a.no_browser:
         webbrowser.open(url)

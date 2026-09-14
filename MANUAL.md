@@ -2,11 +2,16 @@
 
 ## 安装与配置
 
+全新机器请先按 [README 的"从零开始"](README.md#从零开始一台全新机器) 装好 Python 3.11+、git、AWS CLI 并配置凭证。
+
 ```bash
+git clone https://github.com/ButterflyJuicer0/aws-crossborder-instance-selector.git
+cd aws-crossborder-instance-selector
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
 cp config.example.yaml config.yaml
+export AWS_PROFILE=<name>     # 真实运行使用的凭证；select/cleanup 没有 --profile 参数
 ```
 
 先设置区域、机型和探测规模。没有默认 VPC 时提供 `subnet_id`；自定义安全组必须与子网属于同一 VPC。外部 ping 需要 IPv4 ICMP Echo Request 入站规则，详见 [README](README.md#探测源与网络要求)。

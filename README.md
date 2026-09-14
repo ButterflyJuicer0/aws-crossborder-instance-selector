@@ -4,6 +4,68 @@
 
 结果用于比较本次候选，不代表长期网络质量、带宽或业务可用性。测量分两个方向：`agent`（客户中国区服务器 → 候选 EC2）与 Globalping 的 CN 探针提供 China → AWS 方向的主信号；反向探测（候选 EC2 → 大陆目标）只作为 AWS → China 回程健康度，默认权重 0.1。跨境路由通常非对称，两个方向不能互相推断。评分使用逐包 P95 时延与抖动，并融合同网段（prefix）的历史得分。
 
+## 从零开始（一台全新机器）
+
+按顺序做完下面 6 步大约 10 分钟。macOS 与 Linux 相同；Windows 建议在 WSL 里操作。
+
+**1. 系统依赖**：Python 3.11 或更新、git、AWS CLI v2。
+
+```bash
+python3 --version          # ≥ 3.11
+git --version
+aws --version              # aws-cli/2.x；没有就先安装：https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+```
+
+**2. 取代码并装依赖**
+
+```bash
+git clone https://github.com/ButterflyJuicer0/aws-crossborder-instance-selector.git
+cd aws-crossborder-instance-selector
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest -o addopts= -q          # 全部通过即环境正常，不接触 AWS
+```
+
+**3. 配置 AWS 凭证**（真实运行才需要；只跑演示或 `--dry-run` 可跳过）
+
+```bash
+aws configure --profile <name>          # 或 aws configure sso / aws login，按你的账户类型
+export AWS_PROFILE=<name>
+aws sts get-caller-identity             # 能看到 Account 与 Arn 即可
+```
+
+凭证需要的权限清单见下文"运行前提与权限"。目标区域若是 opt-in 区域（如 ap-east-1 香港、ap-east-2 台北），先在账户里启用。Web 向导页脚会显示当前用的 profile、账户和 ARN。
+
+**4. 生成配置**
+
+```bash
+cp config.example.yaml config.yaml
+```
+
+至少确认 `region`；账户在该区域没有默认 VPC 时填顶层 `subnet_id`（须有出网路径且自动分配公网 IPv4）。其余保持默认即可开始。
+
+**5. 先看计划，再真实跑一次最小规模**
+
+```bash
+scripts/find_best_instance.sh <region> 2 1 1 --dry-run   # 不碰 AWS
+scripts/find_best_instance.sh <region> 2 1 1             # 创建 2 台、测 1 轮、保留 1 台；记下输出的 run-id
+```
+
+或者用图形向导 `scripts/start_web.sh`，浏览器打开 http://127.0.0.1:8765。结束后报告在 `out/<run-id>/report.md`；保留的实例持续计费，不需要时用 `cleanup` 或在 Web 里终止。
+
+**6. 接入 China → AWS 探针（推荐）**
+
+把 `agent/crossborder_agent.py` 复制到一台在大陆的机器上运行，方向才是真实的用户侧到 AWS；不接入时主信号只有 Globalping 的 CN 探针。具体前提与三种传输方式见"客户侧部署 China → AWS 探针"。本机快速体验：
+
+```bash
+# 终端 1
+scripts/start_web.sh
+# 终端 2（同一台机器充当 agent）
+python3 agent/crossborder_agent.py serve --server http://127.0.0.1:8765 --agent-id laptop --isp telecom
+```
+
+常见卡点：`config.yaml` 不存在时脚本静默用内置默认值；`select`/`cleanup` 没有 `--profile` 参数，用 `AWS_PROFILE` 环境变量；dry-run 通过不代表权限和配额已验证。
+
 ## 快速开始
 
 需要 Python 3.11 或更新版本。真实运行还需要本机 AWS 凭证及相应权限。

@@ -47,7 +47,7 @@ scripts/start_web.sh
 
 | 配置名 | 测量方式 | 方向 | 默认状态 | 限制 |
 |---|---|---|---|---|
-| `agent` | 客户中国区（或任意大陆）受 SSM 管理的服务器，经 SSM 向全部候选 IP 执行 ICMP ping 与 TCP 连接，输出逐包 RTT 与逐次连接耗时 | China → AWS | 关闭，需配置 `backends.agent.instances` | 只代表 agent 所在网络出口；每台 agent 的 isp 标签由配置给出，工具不校验 |
+| `agent` | 客户在大陆的任意机器（物理机、其他云、中国区 EC2）向全部候选 IP 执行 ICMP ping 与 TCP 连接，输出逐包 RTT 与逐次连接耗时；传输可选 SSM、HTTP 轮询或 S3 信箱 | China → AWS | 关闭，需配置 `backends.agent` | 只代表 agent 所在网络出口；isp 标签由配置或 agent 自报，工具不校验 |
 | `reverse` | 候选 EC2 经 SSM 向配置中的大陆目标执行 ICMP ping 和 TCP 连接测试 | AWS → China | 启用（权重 0.1） | 目标是有限的公共地址和域名（部分为 anycast），只反映回程健康度 |
 | `globalping` | 香港、台湾、大陆公共探针向候选 IP 发送 ping，解析逐包 timings 得到 P95 与抖动 | 东亚/CN → AWS | 启用 | CN 探针数量少且多为数据中心出口，不代表住宅宽带；服务限额以提供方当前规则为准 |
 | `ripeatlas` | RIPE Atlas 在中国大陆的探针向候选 IP 发送 ping | China → AWS | 关闭 | 需 API key、credits 和可用探针；需显式启用 |
@@ -64,6 +64,18 @@ agent 只做出向 ping 和 TCP 连接，所在机器不需要开放任何入站
 | `s3` | 任意机器，且选择器无法被 agent 访问时 | Python 3.8+ 与 boto3，出向 HTTPS，一组只能读写指定 bucket 前缀的凭证 | 一个 S3 bucket |
 
 **单文件 agent**：`agent/crossborder_agent.py` 只依赖标准库（S3 模式才要 boto3），复制到目标机器即可运行，Linux、macOS 均可。
+
+**机器在中国大陆时的前提与选择**
+
+agent 机器需要：Python 3.8 或更新；系统自带 `ping` 且当前用户能执行（Linux 发行版默认允许，精简容器镜像可能没有 `ping` 或缺少 CAP_NET_RAW，此时 ping 样本为空、只剩 TCP 样本）；能出向访问候选 IP 的业务端口（这本来就是要测的东西）。不需要公网 IP、不需要开放入站、不需要 root。
+
+传输方式按"agent 能否访问选择器"决定：
+
+- 选择器跑在你的笔记本或没有公网地址的机器上：大陆机器访问不到它，用 `s3`。bucket 建议建在中国区（`cn-north-1` / `cn-northwest-1`），大陆机器访问中国区 S3 端点稳定；选择器侧 `backends.agent.profile` 填中国区凭证、`region` 填 bucket 区域，agent 侧 `--profile` 用一组只授予该前缀读写的中国区凭证。选择器本身可以在任何地方跑，它访问中国区 S3 走公网即可。
+- 选择器有大陆机器可达的地址（云主机公网 IP、公司内网、隧道）：用 `http`，`http.listen` 改为 `0.0.0.0:8766`，务必设 `token`，并用安全组或防火墙把来源限制到 agent 的出口 IP。
+- 机器是 AWS 中国区 EC2 且已受 SSM 管理：用 `ssm`，不需要在机器上放任何文件。
+
+机器运营商标签（`--isp telecom|unicom|mobile`）决定它在三网加权中的位置；不确定时填机房实际出口运营商，或填自由文本按等权处理。一台机器只代表一个出口，评估"三网"至少三台。
 
 ```bash
 # 验证部署：一次性探测并打印结果

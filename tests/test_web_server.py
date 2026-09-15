@@ -263,3 +263,9 @@ def test_agent_endpoints_share_store_and_registry_is_loopback_only(srv):
         assert ei.value.code == 403
     finally:
         store.collect(job["job_id"], 1, 0)  # 清理共享信箱里的任务
+
+
+def test_agent_status_endpoint(srv):
+    base, _mgr = srv
+    status, body = _get(f"{base}/api/agent/status")
+    assert status == 200 and {"enabled", "transport", "agents", "resolved_sources", "tcp_ports"} <= set(body)

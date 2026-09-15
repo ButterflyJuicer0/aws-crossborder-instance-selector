@@ -5,6 +5,7 @@
 - S3：任务与结果都是 bucket 里的对象，agent 只需出向 HTTPS 与一组限定前缀的凭证。
 两种传输下 agent 的 isp 标签由 agent 自报，`backends.agent.instances` 可按 agent_id 覆盖。
 """
+import ipaddress
 import json
 import socket
 import threading
@@ -45,28 +46,31 @@ class AgentJobStore:
             self._claimed[job["job_id"]] = set()
         return job
 
-    def _touch(self, agent_id, isp, remote_addr):
-        entry = self._registry.setdefault(agent_id, {"isp": "", "last_seen": 0.0, "ip": ""})
+    def _touch(self, agent_id, isp, remote_addr, public_ip=None):
+        entry = self._registry.setdefault(agent_id, {"isp": "", "last_seen": 0.0, "ip": "", "public_ip": ""})
         entry.update({"isp": isp or entry.get("isp", ""), "last_seen": self._now()})
-        if remote_addr:  # 来源 IP 用于自动生成拨测组的允许来源；未带地址的调用不覆盖已有值
+        if remote_addr:  # 连接来源 IP；未带地址的调用不覆盖已有值
             entry["ip"] = remote_addr
+        if public_ip:  # agent 自报的公网出口 IP，比连接来源（可能是回环/NAT 内网）更适合做拨测放行
+            entry["public_ip"] = public_ip
 
-    def claim(self, agent_id: str, isp: str = "", remote_addr: str = None):
+    def claim(self, agent_id: str, isp: str = "", remote_addr: str = None, public_ip: str = None):
         with self._lock:
             self._expire()
-            self._touch(agent_id, isp, remote_addr)
+            self._touch(agent_id, isp, remote_addr, public_ip)
             for jid in sorted(self._jobs, key=lambda j: self._jobs[j]["created_at"]):
                 if agent_id not in self._claimed[jid]:
                     self._claimed[jid].add(agent_id)
                     return dict(self._jobs[jid])
         return None
 
-    def submit(self, job_id: str, agent_id: str, isp: str, items: list, remote_addr: str = None):
+    def submit(self, job_id: str, agent_id: str, isp: str, items: list, remote_addr: str = None, public_ip: str = None):
         with self._lock:
             if job_id not in self._results:
                 raise KeyError(job_id)
-            self._results[job_id][agent_id] = {"isp": isp, "items": list(items), "received_at": self._now()}
-            self._touch(agent_id, isp, remote_addr)
+            self._results[job_id][agent_id] = {"isp": isp, "items": list(items), "received_at": self._now(),
+                                               "public_ip": public_ip or ""}
+            self._touch(agent_id, isp, remote_addr, public_ip)
 
     def collect(self, job_id: str, min_agents: int, timeout_s: float, poll_s: float = 1.0) -> dict:
         deadline = self._now() + timeout_s
@@ -98,6 +102,14 @@ def shared_store() -> AgentJobStore:
         return _SHARED_STORE
 
 
+def valid_ip(value) -> str:
+    """合法 IP 字符串原样返回，否则空串。用于 agent 自报的 public_ip。"""
+    try:
+        return str(ipaddress.ip_address(str(value).strip()))
+    except (ValueError, TypeError):
+        return ""
+
+
 def handle_agent_request(store: AgentJobStore, token: str, method: str, path: str, query: dict,
                          headers, body: bytes, remote_addr: str = None):
     """与具体 HTTP 服务器解耦的请求处理，返回 (status, json_obj_or_None)。
@@ -112,7 +124,8 @@ def handle_agent_request(store: AgentJobStore, token: str, method: str, path: st
         agent_id = (query.get("agent_id") or [""])[0].strip()
         if not agent_id:
             return 400, {"error": "agent_id required"}
-        job = store.claim(agent_id, (query.get("isp") or [""])[0].strip(), remote_addr=remote_addr)
+        job = store.claim(agent_id, (query.get("isp") or [""])[0].strip(), remote_addr=remote_addr,
+                          public_ip=valid_ip((query.get("public_ip") or [""])[0]))
         return (200, job) if job else (204, None)
     if method == "GET" and path == "/api/agent/registry":
         return 200, store.registry()
@@ -121,10 +134,11 @@ def handle_agent_request(store: AgentJobStore, token: str, method: str, path: st
             data = json.loads(body or b"")
             job_id, agent_id = str(data["job_id"]), str(data["agent_id"])
             isp, items = str(data.get("isp") or ""), list(data.get("items") or [])
+            public_ip = valid_ip(data.get("public_ip") or "")
         except (ValueError, KeyError, TypeError):
             return 400, {"error": "invalid json body"}
         try:
-            store.submit(job_id, agent_id, isp, items, remote_addr=remote_addr)
+            store.submit(job_id, agent_id, isp, items, remote_addr=remote_addr, public_ip=public_ip)
         except KeyError:
             return 404, {"error": "unknown or expired job"}
         return 200, {"accepted": True}
@@ -225,9 +239,29 @@ class S3AgentBroker:
                     data = json.loads(self.s3.get_object(Bucket=self.bucket, Key=obj["Key"])["Body"].read())
                     agent_id = str(data.get("agent_id") or obj["Key"].rsplit("/", 1)[-1].removesuffix(".json"))
                     out[agent_id] = {"isp": str(data.get("isp") or ""), "items": list(data.get("items") or []),
-                                     "received_at": obj.get("LastModified")}
+                                     "received_at": obj.get("LastModified"), "public_ip": valid_ip(data.get("public_ip") or "")}
                 except (ValueError, KeyError, TypeError):
                     continue  # 单个坏对象不影响其他 agent
+            if not resp.get("IsTruncated"):
+                return out
+            token = resp.get("NextContinuationToken")
+
+    def registry(self) -> dict:
+        """读取 agent 写的心跳 registry/<agent_id>.json → 与内存信箱 registry() 同构。"""
+        out, token = {}, None
+        while True:
+            kw = {"Bucket": self.bucket, "Prefix": self._key("registry") + "/"}
+            if token:
+                kw["ContinuationToken"] = token
+            resp = self.s3.list_objects_v2(**kw)
+            for obj in resp.get("Contents", []):
+                try:
+                    data = json.loads(self.s3.get_object(Bucket=self.bucket, Key=obj["Key"])["Body"].read())
+                    agent_id = str(data.get("agent_id") or obj["Key"].rsplit("/", 1)[-1].removesuffix(".json"))
+                    out[agent_id] = {"isp": str(data.get("isp") or ""), "public_ip": valid_ip(data.get("public_ip") or ""),
+                                     "ip": "", "last_seen": float(data.get("last_seen") or 0.0)}
+                except (ValueError, KeyError, TypeError):
+                    continue
             if not resp.get("IsTruncated"):
                 return out
             token = resp.get("NextContinuationToken")

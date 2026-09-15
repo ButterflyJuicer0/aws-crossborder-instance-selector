@@ -1,5 +1,6 @@
 """命令行入口：select（多轮选机）、cleanup（按 run-id 清理）、report（重生成报告）。"""
 import argparse
+import ipaddress
 import os
 import secrets
 import sys
@@ -50,6 +51,21 @@ def agent_broker(agent_cfg):
     return S3AgentBroker(s3, agent_cfg["s3"]["bucket"], agent_cfg["s3"].get("prefix", ""))
 
 
+_NON_ROUTABLE = [ipaddress.ip_network(n) for n in (
+    "0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12",
+    "192.168.0.0/16", "224.0.0.0/4", "240.0.0.0/4", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8")]
+
+
+def usable_probe_source(value) -> str:
+    """能作为安全组放行来源的地址：合法 IP 且不是回环/内网/CGNAT/链路本地/组播。返回规范字符串或空串。
+    不用 ipaddress.is_global，它会把 TEST-NET 等文档段也判为非公网。"""
+    try:
+        addr = ipaddress.ip_address(str(value or "").strip())
+    except ValueError:
+        return ""
+    return "" if any(addr in net for net in _NON_ROUTABLE if net.version == addr.version) else str(addr)
+
+
 def probe_source_cidrs(agent_cfg, registry=None, instance_ips=None) -> list:
     """决定拨测组允许的 TCP 来源。显式配置 > http 已注册 agent 来源 IP > ssm 实例公网 IP > 空（不开 TCP）。"""
     if not agent_cfg.get("enabled"):
@@ -58,11 +74,17 @@ def probe_source_cidrs(agent_cfg, registry=None, instance_ips=None) -> list:
     if explicit:
         return explicit
     ips = set()
-    if agent_cfg.get("transport") == "http":
-        ips = {e.get("ip") for e in (registry or {}).values() if e.get("ip")}
+    if agent_cfg.get("transport") in ("http", "s3"):
+        for entry in (registry or {}).values():
+            # agent 自报的公网出口优先；否则用连接来源。回环/内网/链路本地地址对云上候选无意义，丢弃
+            for candidate in (entry.get("public_ip"), entry.get("ip")):
+                addr = usable_probe_source(candidate)
+                if addr:
+                    ips.add(addr)
+                    break
     elif agent_cfg.get("transport") == "ssm":
         ips = {ip for ip in (instance_ips or []) if ip}
-    return sorted(f"{ip}/32" for ip in ips)
+    return sorted(f"{ip}/{'32' if ':' not in ip else '128'}" for ip in ips)
 
 
 def agent_instance_public_ips(agent_cfg) -> list:
@@ -85,8 +107,13 @@ def resolve_probe_sources(cfg) -> list:
         return []
     registry, ips = None, None
     if agent["transport"] == "http":
-        from crossborder_selector.probes.agent_transport import shared_store
-        registry = shared_store().registry()
+        from crossborder_selector.probes import agent_transport
+        registry = agent_transport.shared_store().registry()
+    elif agent["transport"] == "s3":
+        try:
+            registry = agent_broker(agent).registry()
+        except Exception:  # noqa: BLE001 - 读不到心跳就当没有来源
+            registry = {}
     elif agent["transport"] == "ssm":
         ips = agent_instance_public_ips(agent)
     return probe_source_cidrs(agent, registry=registry, instance_ips=ips)

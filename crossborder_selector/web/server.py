@@ -147,6 +147,10 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/api/agent/registry" and method == "GET":
             self._guard(method)
             return self._json(200, store.registry())
+        if u.path == "/api/agent/status" and method in ("GET", "POST"):
+            self._guard(method)  # 页面读取；POST 可带表单覆盖（tcp_ports / probe_source_cidrs）以预览解析结果
+            cfg = self.ctx["api"].load(self._body() if method == "POST" else {})
+            return self._json(200, self.ctx["api"].agent_status(cfg))
         token = self.ctx["api"].load({}).backends["agent"]["http"].get("token", "")
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""

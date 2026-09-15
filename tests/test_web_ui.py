@@ -115,3 +115,43 @@ assert.strictEqual(vm.runInContext("globalThis.__step", context), 2, "点击后�
 """
     result = subprocess.run([node, "-e", script, str(page)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_config_stage_has_agent_panel_and_overrides_carry_agent_settings():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is needed to verify browser-side state handling")
+    page = Path(__file__).parents[1] / "crossborder_selector/web/static/index.html"
+    script = r"""
+const fs = require("fs"), vm = require("vm"), assert = require("assert");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const context = vm.createContext({
+  document: {querySelector: () => ({innerHTML:"", textContent:"", hidden:false, addEventListener(){}, querySelectorAll(){return [];}, classList:{toggle(){}}}),
+             getElementById: () => null},
+  window: {addEventListener() {}}, console, setInterval: () => 0, clearInterval() {}, setTimeout: () => 0, clearTimeout() {},
+  fetch: async () => ({ok: true, headers: {get: () => "application/json"}, json: async () => ({})}), location: {hash: ""}
+});
+vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], context);
+vm.runInContext(`
+  state.region = "ap-east-2";
+  state.options = {defaults: {instance_type:"t3.nano", batch_size:2, max_rounds:1, keep_top_k:1, target_score:90, protect:false,
+    reputation:{badlist_url:"https://x/y", require_badlist:true}, root_volume_type:"gp3", instance_overrides:[],
+    backends:{agent:{enabled:true, transport:"http", tcp_ports:[443], probe_source_cidrs:[]}}},
+    backends: [{name:"agent", enabled:true, needs_key:false, key_present:true, desc:"d"}], instance_types: [], errors: []};
+  initForm();
+`, context);
+// 表单里有 agent 的端口与来源字段，默认取自配置
+assert.strictEqual(vm.runInContext("JSON.stringify(state.form.agent.tcp_ports)", context), "[443]");
+assert.strictEqual(vm.runInContext("JSON.stringify(state.form.agent.probe_source_cidrs)", context), "[]");
+// 页面配置阶段渲染出 agent 面板
+vm.runInContext(`state.imageChoice="auto"; state.instanceImageChoices=[]; state.form.instance_groups=[{instance_type:"t3.nano",count:2}];`, context);
+const markup = vm.runInContext("agentPanelMarkup()", context);
+assert(markup.includes('id="agent-panel"') && markup.includes('id="agent-tcp-ports"') && markup.includes('id="agent-probe-sources"'), markup.slice(0,300));
+// 用户填写后进入 overrides，供 plan/run 使用
+vm.runInContext(`state.form.agent.tcp_ports=[443,8443]; state.form.agent.probe_source_cidrs=["203.0.113.7/32"];`, context);
+const ov = vm.runInContext("buildOverrides()", context);
+assert.strictEqual(JSON.stringify(ov.backends.agent.tcp_ports), "[443,8443]");
+assert.strictEqual(JSON.stringify(ov.backends.agent.probe_source_cidrs), '["203.0.113.7/32"]');
+"""
+    result = subprocess.run([node, "-e", script, str(page)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

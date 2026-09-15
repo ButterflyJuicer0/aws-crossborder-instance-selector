@@ -190,3 +190,22 @@ def test_env_profile_shown_even_when_sts_fails(tmp_path, monkeypatch):
               cwd=str(tmp_path))
     e = api.env("ap-east-1")
     assert e["ok"] is False and e["caller"] == {"profile": "stale", "profile_source": "AWS_PROFILE", "account": None, "arn": None}
+
+
+def test_agent_status_lists_agents_and_resolved_sources(tmp_path, monkeypatch):
+    from crossborder_selector.probes import agent_transport as at
+    store = at.AgentJobStore(clock=lambda: 100.0)
+    monkeypatch.setattr(at, "shared_store", lambda: store)
+    store.claim("lap", isp="telecom", remote_addr="127.0.0.1", public_ip="203.0.113.7")
+    api = Api(factory=_factory(), cwd=str(tmp_path))
+    cfg = api.load({"backends": {"agent": {"enabled": True, "transport": "http", "tcp_ports": [443, 22]}}})
+    s = api.agent_status(cfg)
+    assert s["enabled"] is True and s["transport"] == "http" and s["tcp_ports"] == [443, 22]
+    assert s["agents"] == [{"agent_id": "lap", "isp": "telecom", "ip": "127.0.0.1", "public_ip": "203.0.113.7",
+                            "last_seen": 100.0}]
+    assert s["resolved_sources"] == ["203.0.113.7/32"] and s["source_mode"] == "auto"
+    explicit = api.agent_status(api.load({"backends": {"agent": {"enabled": True, "transport": "http",
+                                                                   "probe_source_cidrs": ["10.0.0.0/8"]}}}))
+    assert explicit["resolved_sources"] == ["10.0.0.0/8"] and explicit["source_mode"] == "explicit"
+    off = api.agent_status(api.load({}))
+    assert off["enabled"] is False and off["resolved_sources"] == []

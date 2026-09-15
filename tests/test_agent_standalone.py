@@ -136,3 +136,53 @@ def test_serve_s3_one_cycle(agent, monkeypatch):
         assert rc == 0
         res = broker.collect(job["job_id"], 1, 0)
         assert res["cn-box"]["isp"] == "mobile" and res["cn-box"]["items"][0]["ip"] == "9.9.9.9"
+
+
+# ---- agent 自报公网出口 IP，供选择器自动生成拨测来源 ----
+
+def test_detect_public_ip_uses_fetcher_and_caches(agent):
+    calls = []
+    def fetcher(url, timeout):
+        calls.append(url); return b" 203.0.113.7\n"
+    assert agent.detect_public_ip(fetcher=fetcher) == "203.0.113.7"
+    assert agent.detect_public_ip(fetcher=fetcher) == "203.0.113.7" and len(calls) == 1  # 缓存
+    agent.detect_public_ip.cache_clear()
+    def broken(url, timeout): raise OSError("offline")
+    assert agent.detect_public_ip(fetcher=broken) is None
+    agent.detect_public_ip.cache_clear()
+    def garbage(url, timeout): return b"<html>"
+    assert agent.detect_public_ip(fetcher=garbage) is None
+    agent.detect_public_ip.cache_clear()
+
+
+def test_http_transport_reports_public_ip_on_claim_and_submit(agent, monkeypatch):
+    from crossborder_selector.probes.agent_transport import AgentJobStore, AgentHttpServer
+    store = AgentJobStore()
+    srv = AgentHttpServer(store, "127.0.0.1", 0, token="tok").start()
+    try:
+        job = store.publish(["1.1.1.1"], 2, [443], 1, ttl_s=60)
+        monkeypatch.setattr(agent, "detect_public_ip", lambda fetcher=None: "203.0.113.7")
+        monkeypatch.setattr(agent, "run_ping", lambda ip, count: [5.0])
+        monkeypatch.setattr(agent, "tcp_connect_times", lambda ip, port, attempts, timeout_s=3.0: [6.0])
+        rc = agent.main(["serve", "--server", f"http://127.0.0.1:{srv.port}", "--token", "tok",
+                        "--agent-id", "lap", "--isp", "telecom", "--once"])
+        assert rc == 0
+        reg = store.registry()["lap"]
+        assert reg["ip"] == "127.0.0.1" and reg["public_ip"] == "203.0.113.7"
+        assert store.collect(job["job_id"], 1, 0)["lap"]["public_ip"] == "203.0.113.7"
+    finally:
+        srv.stop()
+
+
+def test_s3_transport_writes_heartbeat_with_public_ip(agent, monkeypatch):
+    import boto3, json
+    from moto import mock_aws
+    with mock_aws():
+        s3 = boto3.client("s3", region_name="us-east-1"); s3.create_bucket(Bucket="xb-agent")
+        monkeypatch.setattr(agent, "detect_public_ip", lambda fetcher=None: "198.51.100.9")
+        monkeypatch.setattr(agent, "make_s3_client", lambda profile, region: s3)
+        rc = agent.main(["serve", "--s3", "s3://xb-agent/p", "--agent-id", "cn-box", "--isp", "mobile", "--once"])
+        assert rc == 0
+        body = json.loads(s3.get_object(Bucket="xb-agent", Key="p/registry/cn-box.json")["Body"].read())
+        assert body["agent_id"] == "cn-box" and body["isp"] == "mobile" and body["public_ip"] == "198.51.100.9"
+        assert body["last_seen"] > 0

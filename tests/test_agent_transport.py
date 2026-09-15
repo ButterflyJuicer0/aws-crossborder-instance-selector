@@ -230,3 +230,28 @@ def test_http_transport_records_client_ip_in_registry(http_server):
     store, base = http_server
     _get(f"{base}/api/agent/jobs?agent_id=lap&isp=telecom", token="secret")
     assert store.registry()["lap"]["ip"] == "127.0.0.1"
+
+
+def test_registry_keeps_self_reported_public_ip(http_server):
+    store, base = http_server
+    _get(f"{base}/api/agent/jobs?agent_id=lap&isp=telecom&public_ip=203.0.113.7", token="secret")
+    reg = store.registry()["lap"]
+    assert reg["ip"] == "127.0.0.1" and reg["public_ip"] == "203.0.113.7"
+    job = store.publish(["1.1.1.1"], 4, [443], 3, ttl_s=60)
+    _post(f"{base}/api/agent/results", {"job_id": job["job_id"], "agent_id": "lap2", "isp": "unicom",
+                                        "public_ip": "198.51.100.9", "items": _items("1.1.1.1", [1])}, token="secret")
+    assert store.registry()["lap2"]["public_ip"] == "198.51.100.9"
+    # 畸形值不接受
+    _get(f"{base}/api/agent/jobs?agent_id=lap3&isp=x&public_ip=not-an-ip", token="secret")
+    assert store.registry()["lap3"].get("public_ip", "") == ""
+
+
+@mock_aws
+def test_s3_broker_registry_reads_agent_heartbeats():
+    s3 = boto3.client("s3", region_name="us-east-1"); s3.create_bucket(Bucket="xb-agent")
+    broker = S3AgentBroker(s3, "xb-agent", "p")
+    s3.put_object(Bucket="xb-agent", Key="p/registry/cn-box.json",
+                  Body=json.dumps({"agent_id": "cn-box", "isp": "mobile", "public_ip": "198.51.100.9", "last_seen": 1.0}).encode())
+    s3.put_object(Bucket="xb-agent", Key="p/registry/bad.json", Body=b"not json")
+    reg = broker.registry()
+    assert reg == {"cn-box": {"isp": "mobile", "public_ip": "198.51.100.9", "ip": "", "last_seen": 1.0}}

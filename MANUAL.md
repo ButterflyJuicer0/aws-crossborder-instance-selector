@@ -109,7 +109,7 @@ nohup python3 crossborder_agent.py serve --server http://<选择器地址>:8766 
   --agent-id bj-telecom-01 --isp telecom >agent.log 2>&1 &              # 常驻
 ```
 
-3. 运行选择器。CLI 会在 `http.listen` 起监听器；Web 向导用 Web 端口本身（agent 的 `--server` 指向 Web 地址即可），页面"探测源"下能看到已连接的 agent。监听地址对外暴露时用防火墙限制来源 IP。
+3. 运行选择器。CLI 会在 `http.listen` 起监听器；Web 向导用 Web 端口本身（agent 的 `--server` 指向 Web 地址即可）。页面"高级设置 → agent 探针"面板显示已连接的 agent、自报的公网出口 IP 与本次将放行的拨测来源；来源自动来自 agent 自报，无需手填，需要时可在面板里覆盖端口与来源 CIDR。监听地址对外暴露时用防火墙限制来源 IP。
 
 ### 任意机器但选择器不可达（s3 传输）
 

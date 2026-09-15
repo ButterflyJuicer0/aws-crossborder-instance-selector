@@ -242,6 +242,36 @@ class Api:
                              "key_present": key_present, "desc": _BACKEND_DOC[name]["desc"]})
         return {"backends": backends, "defaults": redact(asdict(cfg))}
 
+    def agent_status(self, cfg=None) -> dict:
+        """agent 面板数据：传输方式、已连接 agent、自动解析出的拨测来源。"""
+        from crossborder_selector.cli import probe_source_cidrs, agent_broker, agent_instance_public_ips
+        from crossborder_selector.probes import agent_transport
+        cfg = cfg or self.load({})
+        a = cfg.backends["agent"]
+        out = {"enabled": bool(a["enabled"]), "transport": a["transport"], "tcp_ports": list(a["tcp_ports"]),
+               "min_agents": a["min_agents"], "probe_source_cidrs": list(a.get("probe_source_cidrs") or []),
+               "agents": [], "resolved_sources": [], "source_mode": "none", "notes": []}
+        registry, instance_ips = {}, None
+        if a["transport"] == "http":
+            registry = agent_transport.shared_store().registry()
+        elif a["transport"] == "s3" and a["enabled"]:
+            try:
+                registry = agent_broker(a).registry()
+            except Exception as exc:  # noqa: BLE001
+                out["notes"].append(f"无法读取 S3 心跳：{exc}")
+        elif a["transport"] == "ssm" and a["enabled"]:
+            instance_ips = agent_instance_public_ips(a)
+            registry = {iid: {"isp": isp, "ip": "", "public_ip": "", "last_seen": 0.0} for iid, isp in a["instances"].items()}
+        out["agents"] = [{"agent_id": k, "isp": v.get("isp", ""), "ip": v.get("ip", ""), "public_ip": v.get("public_ip", ""),
+                          "last_seen": v.get("last_seen", 0.0)} for k, v in sorted(registry.items())]
+        if a["enabled"]:
+            out["resolved_sources"] = probe_source_cidrs(a, registry=registry, instance_ips=instance_ips)
+            out["source_mode"] = "explicit" if out["probe_source_cidrs"] else ("auto" if out["resolved_sources"] else "none")
+            if out["source_mode"] == "none":
+                out["notes"].append("没有可用的拨测来源：不会开放 TCP 端口，agent 只能测 ICMP。"
+                                    "等 agent 连上并自报公网 IP，或在下方手动填写来源 CIDR。")
+        return out
+
     def options(self, region: str, subnet_id=None, refresh=False) -> dict:
         overrides = {"region": region}
         if subnet_id is not None:

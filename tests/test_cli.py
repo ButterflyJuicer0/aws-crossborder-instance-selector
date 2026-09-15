@@ -133,12 +133,25 @@ def test_probe_source_cidrs_resolution_order():
     base = {"enabled": True, "transport": "http", "probe_source_cidrs": []}
     # 1) 显式配置优先
     assert probe_source_cidrs({**base, "probe_source_cidrs": ["10.0.0.0/8"]}, registry={"a": {"ip": "1.1.1.1"}}) == ["10.0.0.0/8"]
-    # 2) http：用已注册 agent 的来源 IP（去重、排序、/32；回环地址也保留，本机测试可用）
+    # 2) http：用已注册 agent 的来源 IP（去重、排序、/32）；回环地址对云上候选无意义，丢弃
     reg = {"a": {"ip": "203.0.113.7"}, "b": {"ip": "203.0.113.7"}, "c": {"ip": "127.0.0.1"}, "d": {"ip": ""}}
-    assert probe_source_cidrs(base, registry=reg) == ["127.0.0.1/32", "203.0.113.7/32"]
+    assert probe_source_cidrs(base, registry=reg) == ["203.0.113.7/32"]
     # 3) ssm：由调用方传入 agent 实例公网 IP
     assert probe_source_cidrs({**base, "transport": "ssm"}, instance_ips=["198.51.100.9"]) == ["198.51.100.9/32"]
     # 4) s3 或没有任何来源：空列表 → 不开 TCP
     assert probe_source_cidrs({**base, "transport": "s3"}) == []
     assert probe_source_cidrs(base, registry={}) == []
     assert probe_source_cidrs({**base, "enabled": False}, registry=reg) == []
+
+
+def test_probe_source_cidrs_prefers_public_ip_and_drops_private_or_loopback():
+    from crossborder_selector.cli import probe_source_cidrs
+    base = {"enabled": True, "transport": "http", "probe_source_cidrs": []}
+    reg = {"lap": {"ip": "127.0.0.1", "public_ip": "203.0.113.7"},      # 回环连接但自报公网 IP → 用公网 IP
+           "nat": {"ip": "192.168.1.5", "public_ip": ""},               # 内网来源且没有自报 → 丢弃
+           "vps": {"ip": "198.51.100.9", "public_ip": ""},              # 公网来源 → 用
+           "dup": {"ip": "1.2.3.4", "public_ip": "198.51.100.9"}}       # 与 vps 重复
+    assert probe_source_cidrs(base, registry=reg) == ["198.51.100.9/32", "203.0.113.7/32"]
+    assert probe_source_cidrs(base, registry={"only": {"ip": "127.0.0.1"}}) == []
+    # s3 也能用 registry（来自 S3 心跳）
+    assert probe_source_cidrs({**base, "transport": "s3"}, registry={"cn": {"public_ip": "198.51.100.9"}}) == ["198.51.100.9/32"]

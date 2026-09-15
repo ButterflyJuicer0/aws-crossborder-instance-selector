@@ -163,7 +163,7 @@ scripts/start_web.sh
 python3 agent/crossborder_agent.py serve --server http://127.0.0.1:8765 --agent-id laptop --isp telecom
 ```
 
-Web 向导"高级设置 → 探测源"下会显示已连接的 agent 及其 isp 标签和最近心跳。
+Web 向导"高级设置 → agent 探针"面板会显示已连接的 agent、自报的公网出口 IP、连接来源、运营商标签和最近心跳，以及本次运行将放行的拨测来源和端口。
 
 选择器侧配置（`config.yaml`）：
 
@@ -186,7 +186,7 @@ backends:
 **候选机如何让拨测点访问**：ICMP 由共享安全组放行（见下文"探测源与网络要求"）。agent 的 TCP 探测另有一套只在运行期间存在的开放：
 
 - 每次运行单独创建拨测安全组 `crossborder-probe-<run-id>`，只放行 `tcp_ports`，来源只允许拨测点。候选实例同时挂共享组与这个组。
-- 来源默认自动推断：`http` 传输用已注册 agent 轮询时的来源 IP（/32）；`ssm` 传输用 agent 实例的公网 IP；`s3` 传输无法得知来源，不开 TCP、只测 ICMP。也可用 `backends.agent.probe_source_cidrs` 显式指定，显式值优先。没有任何来源时不创建拨测组，日志会写明"不开放 TCP"。
+- 来源默认自动推断，不需要手填：agent 启动时访问 checkip.amazonaws.com 得到自己的公网出口 IP，随每次领任务/回传自报；`http` 传输优先用自报值，其次用连接来源 IP；`s3` 传输由 agent 写心跳对象 `registry/<agent_id>.json` 带出公网 IP；`ssm` 传输用 agent 实例的公网 IP。回环、内网、CGNAT、链路本地地址会被丢弃。也可用 `backends.agent.probe_source_cidrs` 显式指定，显式值优先。没有任何来源时不创建拨测组，日志会写明"不开放 TCP"。Web 向导"高级设置 → agent 探针"面板实时显示已连接 agent（运营商、公网出口、连接来源、心跳）、本次将放行的来源与端口，并可在此处覆盖端口与来源。
 - 候选机通过 user-data 在 `tcp_ports` 上起临时监听（进程名含 `crossborder_listener`），让 TCP 握手有对端。
 - 运行结束时，保留实例摘掉拨测组、经 SSM 停掉临时监听，随后删除拨测组；落选实例随终止消失。保留实例最终只带共享组，与不启用 agent 时完全一样。中断或异常时 `cleanup --run-id` 会补删拨测组（实例仍在终止中会稍后重试）。
 

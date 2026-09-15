@@ -35,6 +35,32 @@ import urllib.request
 
 MARKER = "CROSSBORDER_AGENT_JSON:"
 _TIME_RE = re.compile(r"time[=<]\s*([0-9]+(?:\.[0-9]+)?)\s*ms")
+PUBLIC_IP_URL = "https://checkip.amazonaws.com"
+
+
+def _default_fetch(url, timeout):
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return r.read()
+
+
+def detect_public_ip(fetcher=None):
+    """本机公网出口 IP（用于选择器自动放行拨测来源）。失败返回 None；结果按 fetcher 缓存。"""
+    key = fetcher or _default_fetch
+    if key in detect_public_ip._cache:
+        return detect_public_ip._cache[key]
+    value = None
+    try:
+        text = (fetcher or _default_fetch)(PUBLIC_IP_URL, 5).decode().strip()
+        import ipaddress
+        value = str(ipaddress.ip_address(text))
+    except Exception:  # noqa: BLE001 - 离线或返回非 IP 都视为未知
+        value = None
+    detect_public_ip._cache[key] = value
+    return value
+
+
+detect_public_ip._cache = {}
+detect_public_ip.cache_clear = detect_public_ip._cache.clear
 
 
 # ---------- 探测 ----------
@@ -92,8 +118,9 @@ def probe_targets(ips: list, ping_count: int, tcp_ports: list, tcp_count: int) -
 # ---------- 传输 ----------
 
 class HttpTransport:
-    def __init__(self, server: str, token: str, agent_id: str, isp: str, timeout_s: float = 20.0):
+    def __init__(self, server: str, token: str, agent_id: str, isp: str, timeout_s: float = 20.0, public_ip: str = ""):
         self.base, self.token, self.agent_id, self.isp, self.timeout = server.rstrip("/"), token, agent_id, isp, timeout_s
+        self.public_ip = public_ip or ""
 
     def _req(self, method, path, body=None):
         headers = {"User-Agent": "crossborder-agent"}
@@ -108,11 +135,15 @@ class HttpTransport:
             return r.status, (json.loads(raw) if raw else None)
 
     def claim(self):
-        status, job = self._req("GET", f"/api/agent/jobs?agent_id={self.agent_id}&isp={self.isp}")
+        q = f"/api/agent/jobs?agent_id={self.agent_id}&isp={self.isp}"
+        if self.public_ip:
+            q += f"&public_ip={self.public_ip}"
+        status, job = self._req("GET", q)
         return job if status == 200 else None
 
     def submit(self, job_id: str, items: list):
-        self._req("POST", "/api/agent/results", {"job_id": job_id, "agent_id": self.agent_id, "isp": self.isp, "items": items})
+        self._req("POST", "/api/agent/results", {"job_id": job_id, "agent_id": self.agent_id, "isp": self.isp,
+                                                  "public_ip": self.public_ip, "items": items})
 
 
 def make_s3_client(profile: str | None, region: str | None):
@@ -127,15 +158,25 @@ def make_s3_client(profile: str | None, region: str | None):
 class S3Transport:
     """任务：<prefix>/jobs/<job_id>.json；结果：<prefix>/results/<job_id>/<agent_id>.json。"""
 
-    def __init__(self, s3_client, bucket: str, prefix: str, agent_id: str, isp: str):
+    def __init__(self, s3_client, bucket: str, prefix: str, agent_id: str, isp: str, public_ip: str = ""):
         self.s3, self.bucket, self.prefix = s3_client, bucket, prefix.strip("/")
-        self.agent_id, self.isp = agent_id, isp
+        self.agent_id, self.isp, self.public_ip = agent_id, isp, public_ip or ""
         self._done = set()
+
+    def heartbeat(self):
+        """registry/<agent_id>.json：让选择器知道有哪些 agent、各自的公网出口与运营商。"""
+        body = {"agent_id": self.agent_id, "isp": self.isp, "public_ip": self.public_ip, "last_seen": time.time()}
+        self.s3.put_object(Bucket=self.bucket, Key=self._key("registry", f"{self.agent_id}.json"),
+                           Body=json.dumps(body).encode(), ContentType="application/json")
 
     def _key(self, *parts):
         return "/".join([self.prefix, *parts]) if self.prefix else "/".join(parts)
 
     def claim(self):
+        try:
+            self.heartbeat()
+        except Exception:  # noqa: BLE001 - 心跳失败不影响领任务
+            pass
         resp = self.s3.list_objects_v2(Bucket=self.bucket, Prefix=self._key("jobs") + "/")
         now = time.time()
         for obj in sorted(resp.get("Contents", []), key=lambda o: o["Key"]):
@@ -159,7 +200,8 @@ class S3Transport:
         return None
 
     def submit(self, job_id: str, items: list):
-        body = {"agent_id": self.agent_id, "isp": self.isp, "items": items, "submitted_at": time.time()}
+        body = {"agent_id": self.agent_id, "isp": self.isp, "public_ip": self.public_ip, "items": items,
+                "submitted_at": time.time()}
         self.s3.put_object(Bucket=self.bucket, Key=self._key("results", job_id, f"{self.agent_id}.json"),
                            Body=json.dumps(body).encode(), ContentType="application/json")
         self._done.add(job_id)
@@ -219,12 +261,15 @@ def main(argv=None) -> int:
         print(MARKER + json.dumps(items, ensure_ascii=False))
         return 0
 
+    public_ip = detect_public_ip() or ""
     if args.server:
-        transport = HttpTransport(args.server, args.token, args.agent_id, args.isp)
+        transport = HttpTransport(args.server, args.token, args.agent_id, args.isp, public_ip=public_ip)
     else:
         bucket, prefix = parse_s3_url(args.s3)
-        transport = S3Transport(make_s3_client(args.profile, args.region), bucket, prefix, args.agent_id, args.isp)
-    log(f"agent {args.agent_id} (isp={args.isp or '-'}) on {_platform.platform()} → {args.server or args.s3}")
+        transport = S3Transport(make_s3_client(args.profile, args.region), bucket, prefix, args.agent_id, args.isp,
+                                public_ip=public_ip)
+    log(f"agent {args.agent_id} (isp={args.isp or '-'}, public_ip={public_ip or '未知'}) on {_platform.platform()} "
+        f"→ {args.server or args.s3}")
     while True:
         try:
             had_job = serve_cycle(transport, log)

@@ -149,6 +149,7 @@ aside.hist h3{margin:0 0 10px;font-size:14px;font-weight:600;display:flex;align-
 .modal .list{font-family:"IBM Plex Mono",monospace;font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:10px 0;max-height:140px;overflow:auto;white-space:pre-wrap}
 footer{padding:14px 28px 28px;color:var(--muted);font-size:12px;text-align:center}
 #aws-identity{margin-bottom:6px;word-break:break-all}#aws-identity .warn{color:var(--warn)}#aws-identity code{font-size:12px}
+#agent-panel{border-top:1px dashed var(--line, #ddd);padding-top:10px}#agent-status .warn{color:var(--warn)}#agent-status table{font-size:12px}
 [hidden]{display:none!important}
 /* Compact layout: primary fields first, details on demand. */
 main{display:block;max-width:1040px;padding:24px;margin:0 auto}
@@ -336,6 +337,9 @@ function initForm(){
     root_volume_size_gib:d.root_volume_size_gib, root_volume_type:d.root_volume_type || "gp3",
     root_volume_encrypted:d.root_volume_encrypted !== false,
     instance_overrides:(d.instance_overrides || []).map(x => ({...x})),
+    agent:{tcp_ports:[...((d.backends && d.backends.agent && d.backends.agent.tcp_ports) || [443])],
+           probe_source_cidrs:[...((d.backends && d.backends.agent && d.backends.agent.probe_source_cidrs) || [])],
+           transport:(d.backends && d.backends.agent && d.backends.agent.transport) || "ssm"},
   };
   state.imageChoice = d.image_preset || (d.image_id ? "custom" : "auto");
   state.instanceImageChoices = state.form.instance_overrides.map(o => o.image_preset || (o.image_id ? "custom" : "inherit"));
@@ -356,6 +360,8 @@ function buildOverrides(){
       return spec;
     }),
     reputation:{badlist_url:f.badlist_url, require_badlist:f.require_badlist},
+    backends:{agent:{tcp_ports:(f.agent && f.agent.tcp_ports) || [443],
+                     probe_source_cidrs:(f.agent && f.agent.probe_source_cidrs) || []}},
     enable_backends:Object.keys(f.backends).filter(k => f.backends[k]),
     disable_backends:Object.keys(f.backends).filter(k => !f.backends[k])};
 }
@@ -572,24 +578,51 @@ function renderGroups(){
   list.querySelectorAll("[data-remove-group]").forEach(b=>b.addEventListener("click",()=>removeGroup(Number(b.dataset.removeGroup))));
   updateTypeInfo();
 }
-async function refreshAgentRegistry(){
-  const el = document.getElementById("agent-registry");
-  if(!el) return;
-  try{
-    const r = await fetch("/api/agent/registry");
-    if(!r.ok) throw new Error("HTTP "+r.status);
-    const reg = await r.json();
-    const ids = Object.keys(reg);
-    if(!ids.length){
-      el.textContent = "agent：尚无已连接的 agent。在客户机器上运行 agent/crossborder_agent.py serve --server http://<本机>:<端口> 后会出现在这里；SSM 传输的实例不在此列表。";
-      return;
-    }
-    const now = Date.now()/1000;
-    el.innerHTML = "agent：已连接 " + ids.length + " 台 · " + ids.map(id => {
-      const age = Math.max(0, Math.round(now - (reg[id].last_seen||now)));
-      return `<code>${esc(id)}</code>（${esc(reg[id].isp||"未标注")}，${age}s 前）`;
-    }).join("、");
-  }catch(e){ el.textContent = "agent：注册表不可用（"+e.message+"）"; }
+// ---------- agent 面板（China → AWS 探针）----------
+function agentPanelMarkup(){
+  const a = (state.form && state.form.agent) || {tcp_ports:[443], probe_source_cidrs:[], transport:"ssm"};
+  return `<div class="field full" id="agent-panel"><label>agent 探针（China → AWS）<span class="hint" style="margin-left:8px">传输：<code id="agent-transport">${esc(a.transport||"ssm")}</code></span></label>
+    <div class="field-grid">
+      <div class="field"><label for="agent-tcp-ports">TCP 探测端口（业务真实端口，逗号分隔）</label><input id="agent-tcp-ports" value="${esc((a.tcp_ports||[]).join(","))}" placeholder="443"></div>
+      <div class="field"><label for="agent-probe-sources">允许访问候选端口的来源 CIDR（留空 = 自动取已连接 agent 的公网出口）</label><input id="agent-probe-sources" value="${esc((a.probe_source_cidrs||[]).join(", "))}" placeholder="自动"></div>
+    </div>
+    <div id="agent-status" class="hint" aria-live="polite">agent：读取中…</div>
+    <p class="hint">候选机在运行期间通过独立的拨测安全组只向上述来源开放上述端口，运行结束保留实例自动摘除；ICMP 由共享安全组放行。在客户机器上运行 <code>python3 agent/crossborder_agent.py serve --server http://&lt;本机地址&gt;:${esc(String(location.port||8765))} --agent-id &lt;id&gt; --isp telecom</code> 即可接入，agent 会自报公网出口 IP。
+      <button class="btn" id="agent-refresh" type="button" style="margin-left:6px">刷新 agent 状态</button></p>
+  </div>`;
+}
+function parseList(text, numeric){
+  return String(text||"").split(/[\s,，;]+/).map(s=>s.trim()).filter(Boolean).map(s=> numeric ? Number(s) : s).filter(v => !numeric || Number.isFinite(v));
+}
+function bindAgentPanel(){
+  const f = state.form; if(!f || !f.agent) return;
+  const ports = $("#agent-tcp-ports"), src = $("#agent-probe-sources"), btn = $("#agent-refresh");
+  if(ports) ports.addEventListener("input", e => { f.agent.tcp_ports = parseList(e.target.value, true); schedulePlan(); refreshAgentStatus(); });
+  if(src) src.addEventListener("input", e => { f.agent.probe_source_cidrs = parseList(e.target.value, false); schedulePlan(); refreshAgentStatus(); });
+  if(btn) btn.addEventListener("click", () => refreshAgentStatus());
+}
+let _agentStatusTimer = null;
+function refreshAgentStatus(){
+  clearTimeout(_agentStatusTimer);
+  _agentStatusTimer = setTimeout(async () => {
+    const el = document.getElementById("agent-status");
+    if(!el) return;
+    try{
+      const s = await post("/api/agent/status", buildOverrides());
+      const now = Date.now()/1000;
+      const agents = (s.agents||[]).map(a => {
+        const age = a.last_seen ? Math.max(0, Math.round(now - a.last_seen)) + "s 前" : "—";
+        return `<tr><td><code>${esc(a.agent_id)}</code></td><td>${esc(a.isp||"未标注")}</td><td>${esc(a.public_ip||"—")}</td><td>${esc(a.ip||"—")}</td><td>${age}</td></tr>`;
+      }).join("");
+      const table = agents ? `<div class="tablewrap"><table><thead><tr><th>agent</th><th>运营商</th><th>公网出口 IP（自报）</th><th>连接来源</th><th>最近心跳</th></tr></thead><tbody>${agents}</tbody></table></div>`
+                           : `<p>尚无已连接的 agent。</p>`;
+      const mode = {explicit:"手动指定", auto:"自动（来自 agent 自报/连接来源）", none:"无"}[s.source_mode] || s.source_mode;
+      const sources = (s.resolved_sources||[]).length ? s.resolved_sources.map(c=>`<code>${esc(c)}</code>`).join(" ") : "<b>无</b>";
+      el.innerHTML = `${s.enabled ? "" : "<p><b>agent 探测源未启用</b>，以下仅供参考。</p>"}${table}
+        <p>本次将放行的拨测来源（${esc(mode)}）：${sources} → 端口 <code>${esc((s.tcp_ports||[]).join(","))}</code></p>
+        ${(s.notes||[]).map(n=>`<p class="warn">${esc(n)}</p>`).join("")}`;
+    }catch(e){ el.textContent = "agent：状态不可用（"+e.message+"）"; }
+  }, 250);
 }
 
 async function refreshAwsIdentity(){
@@ -636,13 +669,14 @@ function mountConfig(){
       <div class="field"><label for="target-score">提前停止分数</label><input id="target-score" type="number" min="0" max="100" value="${f.target_score}"></div>
       <div class="field"><label><input id="c-protect" style="width:auto" type="checkbox"${f.protect ? " checked" : ""}> 选定后开启停止和终止保护</label></div>
       <div class="field full"><label for="badlist-url">GitHub IP 名单（原始文件 URL）</label><input id="badlist-url" value="${esc(f.badlist_url)}"><label class="hint"><input id="require-badlist" style="width:auto" type="checkbox"${f.require_badlist ? " checked" : ""}> 名单查询失败时排除该候选</label></div>
-      <div class="field full"><label>探测源</label>${state.options.backends.map(b => `<label class="hint"><input style="width:auto" id="b-${esc(b.name)}" type="checkbox"${f.backends[b.name] ? " checked" : ""}${b.needs_key && !b.key_present ? " disabled" : ""}> ${esc(b.name)} · ${esc(b.desc)}</label>`).join("")}
-        <div id="agent-registry" class="hint" aria-live="polite">agent：读取中…</div></div>
+      <div class="field full"><label>探测源</label>${state.options.backends.map(b => `<label class="hint"><input style="width:auto" id="b-${esc(b.name)}" type="checkbox"${f.backends[b.name] ? " checked" : ""}${b.needs_key && !b.key_present ? " disabled" : ""}> ${esc(b.name)} · ${esc(b.desc)}</label>`).join("")}</div>
+      ${agentPanelMarkup()}
     </div></details>
     <div id="est"></div><div class="actions"><button class="btn primary" id="cfg-next" type="button">查看启动计划</button></div>`;
   $("#reload-options").addEventListener("click", reloadOptions);
   $("#region-input").addEventListener("change", reloadOptions);
-  refreshAgentRegistry();
+  bindAgentPanel();
+  refreshAgentStatus();
   $("#check-capacity").addEventListener("click", refreshCapacity);
   $("#add-group").addEventListener("click",()=>{
     if(f.batch_size>=50){showError("每轮最多启动 50 台，请先减少已有机型的台数。");return;}

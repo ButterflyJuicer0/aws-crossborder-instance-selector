@@ -149,7 +149,7 @@ aside.hist h3{margin:0 0 10px;font-size:14px;font-weight:600;display:flex;align-
 .modal .list{font-family:"IBM Plex Mono",monospace;font-size:12.5px;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:10px 12px;margin:10px 0;max-height:140px;overflow:auto;white-space:pre-wrap}
 footer{padding:14px 28px 28px;color:var(--muted);font-size:12px;text-align:center}
 #aws-identity{margin-bottom:6px;word-break:break-all}#aws-identity .warn{color:var(--warn)}#aws-identity code{font-size:12px}
-#agent-panel{border-top:1px dashed var(--line, #ddd);padding-top:10px}#agent-status .warn{color:var(--warn)}#agent-status table{font-size:12px}
+#agent-panel{border-top:1px dashed var(--line, #ddd);padding-top:10px}#agent-panel .agent-fields{align-items:start}#agent-panel .agent-fields label{white-space:nowrap}#agent-status .warn{color:var(--warn)}#agent-status table{font-size:12px}
 [hidden]{display:none!important}
 /* Compact layout: primary fields first, details on demand. */
 main{display:block;max-width:1040px;padding:24px;margin:0 auto}
@@ -598,13 +598,14 @@ function renderGroups(){
 function agentPanelMarkup(){
   const a = (state.form && state.form.agent) || {tcp_ports:[443], probe_source_cidrs:[], transport:"ssm"};
   return `<div class="field full" id="agent-panel"><label>agent 探针（China → AWS）<span class="hint" style="margin-left:8px">传输：<code id="agent-transport">${esc(a.transport||"ssm")}</code></span></label>
-    <div class="field-grid">
-      <div class="field"><label for="agent-tcp-ports">TCP 探测端口（业务真实端口，逗号分隔）</label><input id="agent-tcp-ports" value="${esc((a.tcp_ports||[]).join(","))}" placeholder="443"></div>
-      <div class="field"><label for="agent-probe-sources">允许访问候选端口的来源 CIDR（留空 = 自动取已连接 agent 的公网出口）</label><input id="agent-probe-sources" value="${esc((a.probe_source_cidrs||[]).join(", "))}" placeholder="自动"></div>
+    <div class="field-grid agent-fields">
+      <div class="field"><label for="agent-tcp-ports">TCP 探测端口</label><input id="agent-tcp-ports" value="${esc((a.tcp_ports||[]).join(","))}" placeholder="443"><p class="hint">业务真实端口，逗号分隔。</p></div>
+      <div class="field"><label for="agent-probe-sources">拨测来源 CIDR</label><input id="agent-probe-sources" value="${esc((a.probe_source_cidrs||[]).join(", "))}" placeholder="自动"><p class="hint">留空 = 自动取已连接 agent 自报的公网出口。</p></div>
     </div>
     <div id="agent-status" class="hint" aria-live="polite">agent：读取中…</div>
-    <p class="hint">候选机在运行期间通过独立的拨测安全组只向上述来源开放上述端口，运行结束保留实例自动摘除；ICMP 由共享安全组放行。在客户机器上运行 <code>python3 agent/crossborder_agent.py serve --server http://&lt;本机地址&gt;:${esc(String(location.port||8765))} --agent-id &lt;id&gt; --isp telecom</code> 即可接入，agent 会自报公网出口 IP。
-      <button class="btn" id="agent-refresh" type="button" style="margin-left:6px">刷新 agent 状态</button></p>
+    <p class="hint">候选机在运行期间通过独立的拨测安全组只向上述来源开放上述端口，运行结束保留实例自动摘除；ICMP 由共享安全组放行。在客户机器上运行下面的命令即可接入，agent 会自报公网出口 IP：</p>
+    <pre class="cmd">python3 agent/crossborder_agent.py serve --server http://&lt;本机地址&gt;:${esc(String(location.port||8765))} --agent-id &lt;id&gt; --isp telecom</pre>
+    <div class="actions" style="margin-top:8px"><button class="btn" id="agent-refresh" type="button">刷新 agent 状态</button></div>
   </div>`;
 }
 function parseList(text, numeric){

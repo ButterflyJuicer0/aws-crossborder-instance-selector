@@ -68,3 +68,17 @@ def test_main_rejects_non_loopback_without_allow_remote(monkeypatch):
     monkeypatch.setattr(web_main, "make_server", lambda *a, **kw: calls.__setitem__("n", calls["n"] + 1))
     assert web_main.main(["--host", "0.0.0.0", "--no-browser", "--port", "0"]) == 2
     assert calls["n"] == 0  # 在建服务之前就已拒绝
+
+
+def test_port_in_use_gives_actionable_message(capsys):
+    import socket
+    from crossborder_selector.web import __main__ as web_main
+    holder = socket.socket(); holder.bind(("127.0.0.1", 0)); holder.listen(1)
+    port = holder.getsockname()[1]
+    try:
+        rc = web_main.main(["--demo", "--port", str(port), "--no-browser"])
+    finally:
+        holder.close()
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert f"{port}" in err and "已被占用" in err and "--port" in err and "lsof" in err

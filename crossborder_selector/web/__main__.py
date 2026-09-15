@@ -1,5 +1,6 @@
 """python -m crossborder_selector.web：启动本地 Web 向导。"""
 import argparse
+import errno
 import sys
 import webbrowser
 
@@ -31,7 +32,15 @@ def main(argv=None) -> int:
     mgr = RunManager(api, a.output_dir)
     if a.demo:
         install_demo(mgr)
-    server = make_server(a.host, a.port, api, mgr, demo=a.demo, allow_remote=a.allow_remote)
+    try:
+        server = make_server(a.host, a.port, api, mgr, demo=a.demo, allow_remote=a.allow_remote)
+    except OSError as exc:
+        if exc.errno in (errno.EADDRINUSE, getattr(errno, "WSAEADDRINUSE", errno.EADDRINUSE)):
+            print(f"端口 {a.port} 已被占用（很可能是另一个 Web 向导还在运行）。"
+                  f"换端口：scripts/start_web.sh --port {a.port + 1}；或先查看占用者：lsof -iTCP:{a.port} -sTCP:LISTEN，"
+                  "再用 kill <PID> 停掉它。", file=sys.stderr)
+            return 2
+        raise
     url = f"http://{'[' + a.host + ']' if ':' in a.host else a.host}:{server.server_address[1]}"
     print(f"Web 向导：{url}" + ("（演示模式，不接触 AWS）" if a.demo else ""))
     if not a.no_browser:

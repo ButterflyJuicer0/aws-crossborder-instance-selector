@@ -188,11 +188,11 @@ backends:
 **候选机如何让拨测点访问**：ICMP 由共享安全组放行（见下文"探测源与网络要求"）。agent 的 TCP 探测另有一套只在运行期间存在的开放：
 
 - 每次运行单独创建拨测安全组 `crossborder-probe-<run-id>`，只放行 `tcp_ports`，来源只允许拨测点。候选实例同时挂共享组与这个组。
-- 来源默认自动推断，不需要手填：agent 启动时访问 checkip.amazonaws.com 得到自己的公网出口 IP，随每次领任务/回传自报；`http` 传输优先用自报值，其次用连接来源 IP；`s3` 传输由 agent 写心跳对象 `registry/<agent_id>.json` 带出公网 IP；`ssm` 传输用 agent 实例的公网 IP。回环、内网、CGNAT、链路本地地址会被丢弃。也可用 `backends.agent.probe_source_cidrs` 显式指定，显式值优先。没有任何来源时不创建拨测组，日志会写明"不开放 TCP"。Web 向导"高级设置 → agent 探针"面板实时显示已连接 agent（运营商、公网出口、连接来源、心跳）、本次将放行的来源与端口，并可在此处覆盖端口与来源。
+- 来源默认自动推断，不需要手填：agent 启动时访问 checkip.amazonaws.com 得到自己的公网出口 IP，随每次领任务/回传自报；`http` 传输优先用自报值，其次用连接来源 IP；`s3` 传输由 agent 写心跳对象 `registry/<agent_id>.json` 带出公网 IP；`ssm` 传输用 agent 实例的公网 IP。回环、内网、CGNAT、链路本地地址会被丢弃。自动来源按网段放行，默认取该 IP 所在的 /24（`backends.agent.probe_source_prefix_len`，8–32），因为公司或 NAT 出口池通常在同一网段内轮换，/32 会漏掉轮换后的地址。也可用 `backends.agent.probe_source_cidrs` 显式指定，显式值原样使用、优先。没有任何来源时不创建拨测组，日志会写明"不开放 TCP"。Web 向导"高级设置 → agent 探针"面板实时显示已连接 agent（运营商、公网出口、连接来源、心跳）、本次将放行的来源与端口，并可在此处覆盖端口与来源。
 - 候选机通过 user-data 在 `tcp_ports` 上起临时监听（进程名含 `crossborder_listener`），让 TCP 握手有对端。
 - 运行结束时，保留实例摘掉拨测组、经 SSM 停掉临时监听，随后删除拨测组；落选实例随终止消失。保留实例最终只带共享组，与不启用 agent 时完全一样。中断或异常时 `cleanup --run-id` 会补删拨测组（实例仍在终止中会稍后重试）。
 
-工作方式：每轮候选拿到公网 IP 后，选择器发布一个任务（全部候选 IP 加探测参数）。`ssm` 传输对每台实例下发一条命令；`http`/`s3` 传输由 agent 主动领取并回传，选择器等到 `min_agents` 台或 `timeout_s`。agent 以 8 并发探测目标，一轮 20 台、1 个端口约 1 分钟；计划摘要与 Web 面板会显示"预计每轮任务约 N s"，`timeout_s` 必须不小于它，否则整轮候选都会因 `agent_unavailable` 被否决。公司或 NAT 出口若在多个 IP 间轮换，自动放行只覆盖 agent 自报的那一个，此时应显式填写出口网段。单台 agent 失败或缺席只记为该轮警告；没有任何 agent 返回时候选按 `agent_unavailable` 否决，不会凭其他探测源保留。
+工作方式：每轮候选拿到公网 IP 后，选择器发布一个任务（全部候选 IP 加探测参数）。`ssm` 传输对每台实例下发一条命令；`http`/`s3` 传输由 agent 主动领取并回传，选择器等到 `min_agents` 台或 `timeout_s`。agent 以 8 并发探测目标，一轮 20 台、1 个端口约 1 分钟；计划摘要与 Web 面板会显示"预计每轮任务约 N s"，`timeout_s` 必须不小于它，否则整轮候选都会因 `agent_unavailable` 被否决。自动放行按 /24 网段，已覆盖同网段内的 NAT 出口轮换；出口跨网段时显式填写 `probe_source_cidrs`。单台 agent 失败或缺席只记为该轮警告；没有任何 agent 返回时候选按 `agent_unavailable` 否决，不会凭其他探测源保留。
 
 S3 传输给 agent 的最小 IAM 策略只需对 `arn:aws:s3:::<bucket>/<prefix>/*` 的 `s3:GetObject`、`s3:PutObject` 和对 bucket 的 `s3:ListBucket`（限定前缀）。选择器侧还需要 `s3:DeleteObject` 以撤下已完成的任务。
 

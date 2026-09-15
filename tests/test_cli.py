@@ -133,11 +133,11 @@ def test_probe_source_cidrs_resolution_order():
     base = {"enabled": True, "transport": "http", "probe_source_cidrs": []}
     # 1) 显式配置优先
     assert probe_source_cidrs({**base, "probe_source_cidrs": ["10.0.0.0/8"]}, registry={"a": {"ip": "1.1.1.1"}}) == ["10.0.0.0/8"]
-    # 2) http：用已注册 agent 的来源 IP（去重、排序、/32）；回环地址对云上候选无意义，丢弃
+    # 2) http：用已注册 agent 的来源 IP（去重、按默认 /24 归并成网段）；回环地址对云上候选无意义，丢弃
     reg = {"a": {"ip": "203.0.113.7"}, "b": {"ip": "203.0.113.7"}, "c": {"ip": "127.0.0.1"}, "d": {"ip": ""}}
-    assert probe_source_cidrs(base, registry=reg) == ["203.0.113.7/32"]
+    assert probe_source_cidrs(base, registry=reg) == ["203.0.113.0/24"]
     # 3) ssm：由调用方传入 agent 实例公网 IP
-    assert probe_source_cidrs({**base, "transport": "ssm"}, instance_ips=["198.51.100.9"]) == ["198.51.100.9/32"]
+    assert probe_source_cidrs({**base, "transport": "ssm"}, instance_ips=["198.51.100.9"]) == ["198.51.100.0/24"]
     # 4) s3 或没有任何来源：空列表 → 不开 TCP
     assert probe_source_cidrs({**base, "transport": "s3"}) == []
     assert probe_source_cidrs(base, registry={}) == []
@@ -151,10 +151,10 @@ def test_probe_source_cidrs_prefers_public_ip_and_drops_private_or_loopback():
            "nat": {"ip": "192.168.1.5", "public_ip": ""},               # 内网来源且没有自报 → 丢弃
            "vps": {"ip": "198.51.100.9", "public_ip": ""},              # 公网来源 → 用
            "dup": {"ip": "1.2.3.4", "public_ip": "198.51.100.9"}}       # 与 vps 重复
-    assert probe_source_cidrs(base, registry=reg) == ["198.51.100.9/32", "203.0.113.7/32"]
+    assert probe_source_cidrs(base, registry=reg) == ["198.51.100.0/24", "203.0.113.0/24"]
     assert probe_source_cidrs(base, registry={"only": {"ip": "127.0.0.1"}}) == []
     # s3 也能用 registry（来自 S3 心跳）
-    assert probe_source_cidrs({**base, "transport": "s3"}, registry={"cn": {"public_ip": "198.51.100.9"}}) == ["198.51.100.9/32"]
+    assert probe_source_cidrs({**base, "transport": "s3"}, registry={"cn": {"public_ip": "198.51.100.9"}}) == ["198.51.100.0/24"]
 
 
 def test_select_without_credentials_fails_fast_with_hint(monkeypatch, capsys):
@@ -218,3 +218,18 @@ def test_estimate_agent_seconds_and_plan_warns_when_timeout_too_short():
     ok = load_config(None, {"batch_size": 20, "backends": {"agent": {"enabled": True, "transport": "http",
                                                                        "timeout_s": 180, "tcp_ports": [443]}}})
     assert "不足" not in cli.plan_summary(ok, "xb-y")
+
+
+def test_auto_probe_sources_are_networks_not_host_routes():
+    from crossborder_selector.cli import probe_source_cidrs
+    base = {"enabled": True, "transport": "http", "probe_source_cidrs": [], "probe_source_prefix_len": 24}
+    reg = {"a": {"public_ip": "15.248.5.250"}, "b": {"public_ip": "15.248.5.251"}, "c": {"ip": "203.0.113.77"}}
+    # 同一 /24 的两台 agent 合并成一个网段；不同网段各一条；结果按网段规范化
+    assert probe_source_cidrs(base, registry=reg) == ["15.248.5.0/24", "203.0.113.0/24"]
+    # 前缀长度可配：/32 时退回单主机
+    assert probe_source_cidrs({**base, "probe_source_prefix_len": 32}, registry=reg) == \
+        ["15.248.5.250/32", "15.248.5.251/32", "203.0.113.77/32"]
+    # ssm 传输的实例公网 IP 同样按网段
+    assert probe_source_cidrs({**base, "transport": "ssm"}, instance_ips=["198.51.100.9"]) == ["198.51.100.0/24"]
+    # 显式配置原样保留，不做网段归并
+    assert probe_source_cidrs({**base, "probe_source_cidrs": ["10.0.0.1/32"]}, registry=reg) == ["10.0.0.1/32"]

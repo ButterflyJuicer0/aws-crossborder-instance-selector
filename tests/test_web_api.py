@@ -203,7 +203,7 @@ def test_agent_status_lists_agents_and_resolved_sources(tmp_path, monkeypatch):
     assert s["enabled"] is True and s["transport"] == "http" and s["tcp_ports"] == [443, 22]
     assert s["agents"] == [{"agent_id": "lap", "isp": "telecom", "ip": "127.0.0.1", "public_ip": "203.0.113.7",
                             "last_seen": 100.0}]
-    assert s["resolved_sources"] == ["203.0.113.7/32"] and s["source_mode"] == "auto"
+    assert s["resolved_sources"] == ["203.0.113.0/24"] and s["source_mode"] == "auto"
     explicit = api.agent_status(api.load({"backends": {"agent": {"enabled": True, "transport": "http",
                                                                    "probe_source_cidrs": ["10.0.0.0/8"]}}}))
     assert explicit["resolved_sources"] == ["10.0.0.0/8"] and explicit["source_mode"] == "explicit"

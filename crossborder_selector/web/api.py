@@ -252,6 +252,7 @@ class Api:
         out = {"enabled": bool(a["enabled"]), "transport": a["transport"], "tcp_ports": list(a["tcp_ports"]),
                "min_agents": a["min_agents"], "probe_source_cidrs": list(a.get("probe_source_cidrs") or []),
                "timeout_s": timing["timeout_s"], "estimated_job_seconds": timing["estimated_job_seconds"],
+               "probe_source_prefix_len": int(a.get("probe_source_prefix_len") or 24),
                "agents": [], "resolved_sources": [], "source_mode": "none", "notes": []}
         if a["enabled"] and timing["too_short"]:
             out["notes"].append(f"backends.agent.timeout_s={timing['timeout_s']} 小于每轮任务预计耗时约 "

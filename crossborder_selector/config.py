@@ -63,6 +63,8 @@ DEFAULTS = {
                   # 允许访问候选 TCP tcp_ports 的来源 CIDR。空 = 自动：http 用已注册 agent 的来源 IP，
                   # ssm 用 agent 实例公网 IP，s3 无法得知则不开 TCP（只保留 ICMP）。规则放在每次运行独立的拨测组，保留实例不带
                   "probe_source_cidrs": [],
+                  # 自动来源按网段放行的前缀长度：公司/NAT 出口常在同一 /24 内轮换，/32 会漏掉轮换后的地址
+                  "probe_source_prefix_len": 24,
                   "http": {"listen": "127.0.0.1:8766", "token": ""},   # 对外暴露时必须设 token 并限制来源
                   "s3": {"bucket": "", "prefix": "crossborder-agent"},
                   "ping_count": 10, "tcp_ports": [443], "tcp_count": 5, "timeout_s": 180},
@@ -286,6 +288,7 @@ def _validate(d: dict) -> None:
     if not isinstance(agent["http"].get("token", ""), str):
         raise ValueError("backends.agent.http.token must be a string")
     number(agent["min_agents"], "backends.agent.min_agents", 1, integer=True)
+    number(agent["probe_source_prefix_len"], "backends.agent.probe_source_prefix_len", 8, 32, integer=True)
     cidrs = agent["probe_source_cidrs"]
     if not isinstance(cidrs, list):
         raise ValueError("backends.agent.probe_source_cidrs must be a list of CIDR strings")

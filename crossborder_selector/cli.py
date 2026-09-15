@@ -127,7 +127,14 @@ def probe_source_cidrs(agent_cfg, registry=None, instance_ips=None) -> list:
                     break
     elif agent_cfg.get("transport") == "ssm":
         ips = {ip for ip in (instance_ips or []) if ip}
-    return sorted(f"{ip}/{'32' if ':' not in ip else '128'}" for ip in ips)
+    # 按网段放行（默认 /24）：NAT 出口池在同一网段内轮换，/32 只覆盖 agent 当时自报的那一个地址
+    prefix = int(agent_cfg.get("probe_source_prefix_len") or 24)
+    nets = set()
+    for ip in ips:
+        addr = ipaddress.ip_address(ip)
+        plen = prefix if addr.version == 4 else min(128, prefix + 96)  # IPv6 用对应的 /（prefix+96），/24 → /120
+        nets.add(ipaddress.ip_network(f"{ip}/{plen}", strict=False))
+    return [str(n) for n in sorted(nets, key=lambda n: (n.version, int(n.network_address), n.prefixlen))]
 
 
 def agent_instance_public_ips(agent_cfg) -> list:

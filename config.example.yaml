@@ -95,6 +95,7 @@ backends:
     # 允许访问候选 tcp_ports 的来源 CIDR。空 = 自动：http 用已注册 agent 的来源 IP，ssm 用 agent 实例公网 IP，
     # s3 无法得知则不开 TCP 只测 ICMP。规则放在每次运行独立的 crossborder-probe-<run-id> 组，运行结束删除，保留实例不带
     probe_source_cidrs: []
+    probe_source_prefix_len: 24   # 自动来源按网段放行的前缀（8–32）；NAT 出口池在同一 /24 内轮换，/32 会漏掉
     http:
       listen: 127.0.0.1:8766   # CLI 运行时的独立监听地址；Web 向导直接用 Web 端口，无需另开
       token: ''                # 对外暴露监听时必须设置，agent 用 --token 携带

@@ -149,3 +149,11 @@ def test_instance_groups_keep_all_or_none_and_sum_drives_keep_top_k():
     zero = load_config(None, {"instance_groups": [{"instance_type": "t4g.micro", "count": 2, "keep": 0},
                                                   {"instance_type": "a1.2xlarge", "count": 1, "keep": 1}]})
     assert zero.keep_top_k == 1 and keep_quotas(zero) == {"t4g.micro": 0, "a1.2xlarge": 1}
+
+
+def test_probe_source_prefix_len_default_and_bounds():
+    assert load_config(None).backends["agent"]["probe_source_prefix_len"] == 24
+    assert load_config(None, {"backends": {"agent": {"probe_source_prefix_len": 32}}}).backends["agent"]["probe_source_prefix_len"] == 32
+    for bad in (7, 33, "24", 24.5):
+        with pytest.raises(ValueError):
+            load_config(None, {"backends": {"agent": {"probe_source_prefix_len": bad}}})

@@ -315,3 +315,36 @@ def test_no_probe_group_means_no_detach_or_delete():
     Orchestrator(_cfg(max_rounds=1, batch_size=1), ec2, FakeSsm(), [ScriptedBackend({})], [], lambda ip: "", INFRA,
                  "xb-plain", log=lambda *a: None).run()
     assert ec2.detached == [] and ec2.deleted_groups == []
+
+
+class TypedEc2(FakeEc2):
+    """按启动顺序赋予机型，并像真实 Ec2Manager 一样记录 launch_settings。"""
+    def __init__(self, ips, types):
+        super().__init__(ips); self.types, self.launch_settings = list(types), {}
+    def launch(self, n, run_id, round_no, infra, instance_type):
+        ids = super().launch(n, run_id, round_no, infra, instance_type)
+        for iid in ids:
+            self.launch_settings[iid] = {"InstanceType": self.types.pop(0)}
+        return ids
+
+
+def test_per_type_keep_quotas_select_best_within_each_type():
+    ec2 = TypedEc2(["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"], ["t4g.micro", "t4g.micro", "a1.2xlarge", "a1.2xlarge"])
+    cfg = _cfg(max_rounds=1, instance_groups=[{"instance_type": "t4g.micro", "count": 2, "keep": 1},
+                                              {"instance_type": "a1.2xlarge", "count": 2, "keep": 1}])
+    be = ScriptedBackend({"10.0.0.1": 50.0, "10.0.0.2": 60.0, "10.0.0.3": 200.0, "10.0.0.4": 250.0})
+    rr = Orchestrator(cfg, ec2, FakeSsm(), [be], [], lambda ip: "", INFRA, "xb-quota", log=lambda *a: None).run()
+    kept = {w.candidate.public_ip: w.candidate.instance_type for w in rr.winners}
+    # 全局前二本应是两台 t4g.micro；按机型配额后每种各留最好的一台
+    assert kept == {"10.0.0.1": "t4g.micro", "10.0.0.3": "a1.2xlarge"}
+    assert set(ec2.live) == {"i-1", "i-3"}
+
+
+def test_keep_zero_type_is_only_a_control_group():
+    ec2 = TypedEc2(["10.0.0.1", "10.0.0.2", "10.0.0.3"], ["t4g.micro", "t4g.micro", "a1.2xlarge"])
+    cfg = _cfg(max_rounds=1, instance_groups=[{"instance_type": "t4g.micro", "count": 2, "keep": 0},
+                                              {"instance_type": "a1.2xlarge", "count": 1, "keep": 1}])
+    be = ScriptedBackend({"10.0.0.1": 10.0, "10.0.0.2": 20.0, "10.0.0.3": 300.0 - 1})
+    rr = Orchestrator(cfg, ec2, FakeSsm(), [be], [], lambda ip: "", INFRA, "xb-zero", log=lambda *a: None).run()
+    assert [w.candidate.instance_type for w in rr.winners] == ["a1.2xlarge"]
+    assert set(ec2.live) == {"i-3"}

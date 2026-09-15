@@ -6,6 +6,9 @@ region: ap-east-1
 instance_type: t3.nano
 # 多机型清单；非空时每轮总数由 count 相加，覆盖单机型的 instance_type / batch_size
 # instance_groups: [{instance_type: t3.nano, count: 2}, {instance_type: t4g.nano, count: 3}]
+# 多机型：每行 count 为每轮启动台数，可选 keep 为该机型最终保留台数（要么每行都填，要么都不填；
+#   填了则按机型分别保留，keep_top_k 自动等于各行之和；keep: 0 表示只做对照不保留）
+# instance_groups: [{instance_type: t4g.micro, count: 10, keep: 3}, {instance_type: a1.2xlarge, count: 1, keep: 1}]
 instance_groups: []
 # 自定义 AMI，留空则由启动逻辑自动选择
 image_id: ''

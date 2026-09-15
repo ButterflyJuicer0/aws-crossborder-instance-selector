@@ -51,7 +51,8 @@ def test_ensure_infra_honours_explicit_ids():
     ec2, iam, ssm = _clients()
     image = _seed_ami(ssm, ec2)
     vpc = ec2.create_vpc(CidrBlock="10.9.0.0/16")["Vpc"]["VpcId"]
-    subnet = ec2.create_subnet(VpcId=vpc, CidrBlock="10.9.1.0/24")["Subnet"]["SubnetId"]
+    # 固定到提供 t3.nano 的可用区：moto 随机分配的 us-east-1e 不在该机型的 offerings 里
+    subnet = ec2.create_subnet(VpcId=vpc, CidrBlock="10.9.1.0/24", AvailabilityZone=f"{REGION}a")["Subnet"]["SubnetId"]
     sg = ec2.create_security_group(GroupName="mine", Description="d", VpcId=vpc)["GroupId"]
     cfg = load_config(None, {"region": REGION, "subnet_id": subnet, "security_group_id": sg,
                              "image_id": image, "instance_profile_name": "my-profile",

@@ -155,3 +155,47 @@ assert.strictEqual(JSON.stringify(ov.backends.agent.probe_source_cidrs), '["203.
 """
     result = subprocess.run([node, "-e", script, str(page)], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_per_group_keep_inputs_and_overrides_sum_to_keep_top_k():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is needed to verify browser-side state handling")
+    page = Path(__file__).parents[1] / "crossborder_selector/web/static/index.html"
+    script = r"""
+const fs = require("fs"), vm = require("vm"), assert = require("assert");
+const html = fs.readFileSync(process.argv[1], "utf8");
+const context = vm.createContext({
+  document: {querySelector: () => ({innerHTML:"", textContent:"", hidden:false, addEventListener(){}, querySelectorAll(){return [];}, classList:{toggle(){}}}), getElementById: () => null},
+  window: {addEventListener() {}}, console, setInterval: () => 0, clearInterval() {}, setTimeout: () => 0, clearTimeout() {},
+  fetch: async () => ({ok: true, headers: {get: () => "application/json"}, json: async () => ({})}), location: {hash: ""}
+});
+vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1], context);
+vm.runInContext(`
+  state.region = "us-west-2";
+  state.options = {defaults: {instance_type:"t4g.micro", batch_size:11, max_rounds:3, keep_top_k:5, target_score:90, protect:false,
+    instance_groups:[{instance_type:"t4g.micro", count:10, keep:4}, {instance_type:"a1.2xlarge", count:1, keep:1}],
+    reputation:{badlist_url:"https://x/y", require_badlist:true}, root_volume_type:"gp3", instance_overrides:[],
+    backends:{agent:{enabled:false, transport:"ssm", tcp_ports:[443], probe_source_cidrs:[]}}},
+    backends: [], instance_types: [], errors: []};
+  initForm();
+`, context);
+// 每组自带 keep；总保留数由各组求和
+assert.strictEqual(vm.runInContext("JSON.stringify(state.form.instance_groups.map(g=>g.keep))", context), "[4,1]");
+assert.strictEqual(vm.runInContext("keepTotal()", context), 5);
+// 分组行里有每组的保留数输入
+const rows = vm.runInContext("state.imageChoice='auto'; state.instanceImageChoices=[]; groupsMarkup()", context);
+assert(rows.includes('id="group-keep-0"') && rows.includes('id="group-keep-1"'), rows.slice(0, 300));
+// 修改某组保留数后 overrides 同步：instance_groups 带 keep，keep_top_k 为总和
+vm.runInContext("state.form.instance_groups[0].keep = 2;", context);
+const ov = vm.runInContext("buildOverrides()", context);
+assert.strictEqual(JSON.stringify(ov.instance_groups.map(g=>g.keep)), "[2,1]");
+assert.strictEqual(ov.keep_top_k, 3);
+// 默认配置没有 keep 时：把全局 keep_top_k 放到第一组，其余为 0
+vm.runInContext(`
+  state.options.defaults.instance_groups = [{instance_type:"t4g.micro", count:2}, {instance_type:"a1.2xlarge", count:2}];
+  state.options.defaults.keep_top_k = 2; initForm();`, context);
+assert.strictEqual(vm.runInContext("JSON.stringify(state.form.instance_groups.map(g=>g.keep))", context), "[2,0]");
+"""
+    result = subprocess.run([node, "-e", script, str(page)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

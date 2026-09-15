@@ -108,7 +108,7 @@ def test_loading_list_updates_in_place_without_losing_typed_models_or_counts(bro
     monkeypatch.setattr(manager.api, "options", delayed)
     try:
         open_form(browser, base)
-        browser.evaluate('change("group-count-0","2");change("keep-top-k","2");document.getElementById("add-group").click();change("group-type-1","t")')
+        browser.evaluate('change("group-count-0","2");change("group-keep-0","2");document.getElementById("add-group").click();change("group-type-1","t")')
         assert browser.evaluate('document.querySelector("#group-type-1-combo .combo-menu").textContent.includes("正在加载")')
         assert not browser.evaluate('document.querySelector("#group-type-1-combo .combo-menu").textContent.includes("0 / 0")')
         gate.set()
@@ -152,8 +152,8 @@ def test_per_round_and_final_retention_are_visible_and_used_by_simulated_run(bro
     base, _ = srv
     open_form(browser, base)
     browser.wait("!state.loading && state.imageStatus === 'ready'")
-    assert browser.evaluate('document.getElementById("keep-top-k").closest("details") === null')
-    browser.evaluate('change("group-count-0","3");change("max-rounds","2");document.getElementById("add-group").click();change("group-type-1","t4g.nano");change("group-count-1","3");change("keep-top-k","7");change("target-score","0")')
+    assert browser.evaluate('document.getElementById("group-keep-0").closest("details") === null')
+    browser.evaluate('change("group-count-0","3");change("max-rounds","2");document.getElementById("add-group").click();change("group-type-1","t4g.nano");change("group-count-1","3");change("group-keep-0","4");change("group-keep-1","3");change("target-score","0")')
     browser.wait("state.imageStatus === 'ready'")
     assert browser.evaluate('document.getElementById("batch-total").textContent') == "6 台"
     assert browser.evaluate("buildOverrides().keep_top_k") == 7

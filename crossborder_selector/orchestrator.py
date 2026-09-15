@@ -7,7 +7,7 @@ from crossborder_selector.models import Candidate, CandidateScore, RoundResult, 
 from crossborder_selector.probes.base import run_backends
 from crossborder_selector.reputation.base import score_reputation
 from crossborder_selector.scoring import score_candidate, rank
-from crossborder_selector.config import launch_groups
+from crossborder_selector.config import launch_groups, keep_quotas
 
 
 def utc_now_iso() -> str:
@@ -95,6 +95,21 @@ class Orchestrator:
         except Exception as e:  # noqa: BLE001
             self.log(f"[retire] 删除拨测组 {probe_sg} 失败：{e}；可用 cleanup --run-id 重试")
 
+    def _select_kept(self, pool) -> list:
+        """从已排序的候选池中选出保留者：按机型配额时每种机型各取合格的前 keep 台，否则全局前 keep_top_k。"""
+        quotas = keep_quotas(self.cfg)
+        qualified = [s for s in pool if s.qualified]
+        if quotas is None:
+            return qualified[: self.cfg.keep_top_k]
+        taken = {t: 0 for t in quotas}
+        kept = []
+        for s in qualified:
+            t = s.candidate.instance_type
+            if taken.get(t, 0) < quotas.get(t, 0):
+                kept.append(s)
+                taken[t] = taken.get(t, 0) + 1
+        return kept
+
     def _round(self, rno, ids, incumbents) -> RoundResult:
         terminated = []
         try:
@@ -143,7 +158,7 @@ class Orchestrator:
                       for c, rep in survivors]
 
             pool = rank(list(incumbents) + scored)
-            kept = [s for s in pool if s.qualified][: self.cfg.keep_top_k]
+            kept = self._select_kept(pool)
             keep_ids = {s.candidate.instance_id for s in kept}
             losers = [s.candidate.instance_id for s in pool if s.candidate.instance_id not in keep_ids]
             self.ec2.terminate(losers)

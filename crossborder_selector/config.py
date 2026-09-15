@@ -133,6 +133,17 @@ def launch_groups(cfg):
     return cfg.instance_groups or [{"instance_type": cfg.instance_type, "count": cfg.batch_size}]
 
 
+def keep_quotas(cfg):
+    """每机型最终保留台数 {instance_type: keep}；未按机型配置时返回 None（沿用全局 keep_top_k 混排）。"""
+    groups = cfg.instance_groups or []
+    if not groups or any("keep" not in g for g in groups):
+        return None
+    quotas = {}
+    for g in groups:
+        quotas[g["instance_type"]] = quotas.get(g["instance_type"], 0) + int(g["keep"])
+    return quotas
+
+
 def launch_specs(cfg):
     from dataclasses import asdict
     defaults = asdict(cfg)
@@ -179,13 +190,24 @@ def _validate(d: dict) -> None:
     if not isinstance(groups, list) or len(groups) > 50:
         raise ValueError("instance_groups must be a list with at most 50 rows")
     for group in groups:
-        if not isinstance(group, dict) or set(group) != {"instance_type", "count"}:
-            raise ValueError("instance_groups rows require instance_type and count")
+        if not isinstance(group, dict) or not {"instance_type", "count"} <= set(group) <= {"instance_type", "count", "keep"}:
+            raise ValueError("instance_groups rows require instance_type and count (keep is optional)")
         instance_type(group["instance_type"])
         number(group["count"], "instance_groups.count", 1, 50, integer=True)
     if groups:
         d["batch_size"] = sum(g["count"] for g in groups)
         d["instance_type"] = groups[0]["instance_type"]
+        with_keep = [g for g in groups if "keep" in g]
+        if with_keep and len(with_keep) != len(groups):
+            raise ValueError("instance_groups: 要么每一行都填 keep（该机型最终保留台数），要么都不填改用 keep_top_k")
+        if with_keep:
+            number(d["max_rounds"], "max_rounds", 1, 10, integer=True)
+            for g in groups:
+                number(g["keep"], f"instance_groups[{g['instance_type']}].keep", 0, g["count"] * d["max_rounds"], integer=True)
+            total = sum(g["keep"] for g in groups)
+            if total < 1:
+                raise ValueError("instance_groups: 各机型 keep 之和至少为 1")
+            d["keep_top_k"] = total  # 顶层保留数由各机型配额求和得出
     for key, maximum in (("keep_top_k", 50), ("batch_size", 50), ("max_rounds", 10),
                          ("min_backends", len(KNOWN_BACKENDS)), ("ssm_online_timeout_s", None)):
         number(d[key], key, 1, maximum, integer=True)

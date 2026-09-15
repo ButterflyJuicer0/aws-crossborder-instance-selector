@@ -233,7 +233,7 @@ CLI 和 Web 服务自动读取当前目录中的 `config.yaml`，也可用 `--co
 | 配置 | 默认值 | 说明 |
 |---|---|---|
 | `region` / `instance_type` | `ap-east-1` / `t3.nano` | 区域和机型 |
-| `batch_size` / `max_rounds` / `keep_top_k` | `10` / `3` / `1` | 每轮数量 1–50、轮次 1–10、保留数 1–50；保留数不能超过计划启动总数 |
+| `batch_size` / `max_rounds` / `keep_top_k` | `10` / `3` / `1` | 每轮数量 1–50、轮次 1–10、保留数 1–50；保留数不能超过计划启动总数。`instance_groups` 各行填了 `keep` 时 `keep_top_k` 自动为其和，按机型分别保留 |
 | `target_score` | `90` | 最高综合分达到此值可提前停止 |
 | `min_backends` | `1` | 有效探测源的最低数量，不得超过实际可用的已启用源数量 |
 | `protect` | `false` | CLI 在筛选结束后、Web 在人工选定后启用停止和终止保护 |
@@ -267,7 +267,9 @@ scripts/start_web.sh --demo --no-browser
 
 开始页的“添加机型”支持多行配置，例如 `t3.nano × 2` 和 `t4g.nano × 3`。每行设置“每轮启动台数”，页面自动显示每轮总数；“最终希望保留”独立设置所有机型合计的保留目标。每轮最多 50 台，保留数为 1–50 台且不能超过计划启动总数。未凑够保留数量时，即使已有候选达到评分目标，也会继续下一轮，直到数量满足或达到最多轮次；合格候选不足时最终数量可能少于目标。调整某行数量或移除机型时，其他机型的逐台配置保持对应。
 
-API 和配置文件使用 `instance_groups: [{instance_type: t3.nano, count: 2}, {instance_type: t4g.nano, count: 3}]`。非空清单决定 `batch_size` 和实际各机型数量；空清单保留原 `instance_type` + `batch_size` 用法。配额按对应的 vCPU 配额组汇总，并为跨轮可能保留的最大 vCPU 用量预留空间。默认 VPC 中允许为不同机型选择不同可用区的子网；指定子网时，每一种机型都必须在该可用区提供。
+API 和配置文件使用 `instance_groups: [{instance_type: t3.nano, count: 2, keep: 1}, {instance_type: t4g.nano, count: 3, keep: 2}]`。非空清单决定 `batch_size` 和实际各机型数量；空清单保留原 `instance_type` + `batch_size` 用法。
+
+**每机型独立的最终保留数**：每行的 `keep` 是该机型最终要保留的台数，排序在同一机型内部进行，各机型各取自己的前 `keep` 台，不会因为某个便宜机型分数普遍更高而挤掉另一个机型的名额。`keep: 0` 表示该机型只作对照、不保留。填了 `keep` 就要每行都填，此时顶层 `keep_top_k` 自动等于各行之和（至少 1，且每行 `keep ≤ count × max_rounds`）；都不填则沿用全局 `keep_top_k` 混排。Web 向导每个机型行都有"最终保留（台）"输入，顶部"最终希望保留"改为自动合计。配额按对应的 vCPU 配额组汇总，并为跨轮可能保留的最大 vCPU 用量预留空间。默认 VPC 中允许为不同机型选择不同可用区的子网；指定子网时，每一种机型都必须在该可用区提供。
 
 页面提供 Amazon Linux 2023、Ubuntu 24.04 LTS 和 Ubuntu 22.04 LTS 选项，按当前区域和机型架构查询实际 AMI，也可手动输入 AMI ID。切换区域或架构后，已选系统会重新解析；无法获取时提示重新选择，不自动换成其他系统。根卷容量、卷类型和加密可配置；“逐台设置”可覆盖每轮指定序号候选的镜像、容量和卷类型。配置文件示例：
 

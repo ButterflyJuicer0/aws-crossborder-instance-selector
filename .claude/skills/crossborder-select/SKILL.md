@@ -139,7 +139,7 @@ NXDOMAIN 未命中；`127.0.0.x` 命中；`127.255.255.254/255` 是解析器被 
 - `examples/api_client.py` 无参数只看计划；`start` 必须加 `--execute` 才创建。Python 类的 `client.start(config)` 直接创建。
 - 创建接口没有跨请求幂等键。请求超时后先查 `runs`，不要自动重试创建。`wait` 超时或客户端中断不停止服务端运行。
 - AMI 绑定区域和架构，不能跨区域复用；混合架构用 `image_preset` 按台解析，不要把一种架构的 AMI 复制给全部机型。
-- 多机型用 `instance_groups` 或重复 `--group t3.nano=2 --group t4g.nano=3`，与单机型的 `--instance-type`/`--count` 不同时使用；保留数按全部机型合计。
+- 多机型用 `instance_groups` 或重复 `--group t3.nano=2 --group t4g.nano=3`，与单机型的 `--instance-type`/`--count` 不同时使用。要"每个机型各留几台"，给每行加 `keep`（要么都填要么都不填，`keep: 0` 只做对照），排序按机型分开各取前 keep 台，`keep_top_k` 自动等于各行之和；不填 keep 则全局混排取前 `keep_top_k`。Web 每个机型行有"最终保留（台）"，顶部为自动合计。
 - 镜像查询失败时保留手动输入途径，不虚构 AMI，不静默替换用户选的系统。
 
 ## 常见错误

@@ -15,7 +15,7 @@ from crossborder_selector.aws.infra import (ensure_infra, delete_infra, delete_s
                                             needs_inbound_ping, delete_probe_security_group, probe_sg_name)
 from crossborder_selector.aws.ipranges import load_ip_ranges, PrefixLookup
 from crossborder_selector.aws.ssm import SsmRunner
-from crossborder_selector.config import load_config, launch_groups
+from crossborder_selector.config import load_config, launch_groups, keep_quotas
 from crossborder_selector.orchestrator import Orchestrator
 from crossborder_selector.probes.agent import AgentBackend
 from crossborder_selector.probes.globalping import GlobalpingBackend
@@ -164,9 +164,11 @@ def plan_summary(cfg, run_id) -> str:
     enabled = [n for n, v in cfg.backends.items() if v["enabled"]
                and not (n == "ripeatlas" and not (v.get("api_key") or "").strip())]
     lines = [f"DRY-RUN run-id={run_id}", f"region={cfg.region}",
-             "per round: " + ", ".join(f"{g['count']} x {g['instance_type']}" for g in launch_groups(cfg)) +
+             "per round: " + ", ".join(f"{g['count']} x {g['instance_type']}" + (f" (keep={g['keep']})" if "keep" in g else "")
+                                       for g in launch_groups(cfg)) +
              f", max_rounds={cfg.max_rounds}, "
-             f"keep_top_k={cfg.keep_top_k}, target_score={cfg.target_score}",
+             f"keep_top_k={cfg.keep_top_k}" + (" (per-type quotas)" if keep_quotas(cfg) else "") +
+             f", target_score={cfg.target_score}",
              f"infra: subnet={cfg.subnet_id or '<default VPC>'} sg={cfg.security_group_id or security_group_name(cfg)} "
              f"profile={cfg.instance_profile_name or 'crossborder-selector-ssm'} ami={cfg.image_id or cfg.image_preset or '<AL2023 latest>'}",
              f"root volume: {cfg.root_volume_size_gib or '<AMI default>'} GiB, {cfg.root_volume_type}, encrypted={cfg.root_volume_encrypted}",

@@ -122,3 +122,30 @@ def test_agent_probe_source_cidrs_default_and_validation():
     for bad in (["not-a-cidr"], ["203.0.113.7"], "203.0.113.7/32", [1]):
         with pytest.raises(ValueError):
             load_config(None, {"backends": {"agent": {"probe_source_cidrs": bad}}})
+
+
+# ---- 每机型独立的最终保留数 ----
+
+def test_instance_groups_keep_all_or_none_and_sum_drives_keep_top_k():
+    from crossborder_selector.config import keep_quotas
+    cfg = load_config(None, {"max_rounds": 2, "instance_groups": [
+        {"instance_type": "t4g.micro", "count": 10, "keep": 3},
+        {"instance_type": "a1.2xlarge", "count": 1, "keep": 1}]})
+    assert cfg.keep_top_k == 4 and keep_quotas(cfg) == {"t4g.micro": 3, "a1.2xlarge": 1}
+    # 没有 keep：沿用全局 keep_top_k，quotas 为 None
+    plain = load_config(None, {"keep_top_k": 2, "instance_groups": [
+        {"instance_type": "t4g.micro", "count": 3}, {"instance_type": "a1.2xlarge", "count": 3}]})
+    assert plain.keep_top_k == 2 and keep_quotas(plain) is None
+    for bad in (
+        [{"instance_type": "t4g.micro", "count": 2, "keep": 1}, {"instance_type": "a1.2xlarge", "count": 2}],  # 只填一部分
+        [{"instance_type": "t4g.micro", "count": 2, "keep": 5}],          # keep 超过 count×max_rounds（默认 3 轮 → 6 可以，5 不行需 count 1）
+        [{"instance_type": "t4g.micro", "count": 2, "keep": 0}],          # 全部为 0
+        [{"instance_type": "t4g.micro", "count": 2, "keep": -1}],
+        [{"instance_type": "t4g.micro", "count": 2, "keep": "2"}],
+    ):
+        with pytest.raises(ValueError):
+            load_config(None, {"max_rounds": 2, "instance_groups": bad})
+    # keep 为 0 的机型只做对照、不保留，只要总和 ≥ 1
+    zero = load_config(None, {"instance_groups": [{"instance_type": "t4g.micro", "count": 2, "keep": 0},
+                                                  {"instance_type": "a1.2xlarge", "count": 1, "keep": 1}]})
+    assert zero.keep_top_k == 1 and keep_quotas(zero) == {"t4g.micro": 0, "a1.2xlarge": 1}

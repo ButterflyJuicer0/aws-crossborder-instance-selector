@@ -197,3 +197,10 @@ def test_default_factory_includes_sts():
     cfg = load_config(None, {"region": "us-east-1"})
     clients = cli.default_factory(cfg)
     assert {"ec2", "iam", "ssm", "sts"} <= set(clients) and clients["sts"].meta.service_model.service_name == "sts"
+
+
+def test_plan_summary_shows_per_type_keep():
+    cfg = load_config(None, {"instance_groups": [{"instance_type": "t4g.micro", "count": 4, "keep": 2},
+                                                 {"instance_type": "a1.2xlarge", "count": 1, "keep": 1}]})
+    text = cli.plan_summary(cfg, "xb-x")
+    assert "keep_top_k=3" in text and "t4g.micro" in text and "keep=2" in text and "a1.2xlarge" in text and "keep=1" in text

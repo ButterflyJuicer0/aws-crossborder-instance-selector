@@ -75,6 +75,18 @@ scripts/find_best_instance.sh ap-east-1 2 1 1
 
 指定镜像可增加 `--image-id <ami-id>`；逐台覆盖通过网页或 `config.yaml` 的 `instance_overrides` 配置。自定义 AMI 必须属于所选区域、架构匹配且根卷容量满足要求。高级设置中的子网必须有出网路径。
 
+## 多机型与按机型保留
+
+```yaml
+instance_groups:
+  - {instance_type: t4g.micro, count: 10, keep: 3}   # 每轮 10 台，最终留分最高的 3 台
+  - {instance_type: a1.2xlarge, count: 1, keep: 1}   # 每轮 1 台，最终留 1 台
+  - {instance_type: c6g.large, count: 2, keep: 0}    # 只做对照，不保留
+max_rounds: 3
+```
+
+`keep` 要么每行都填，要么都不填。填了时排序按机型分开，各取自己的前 `keep` 台，`keep_top_k` 自动等于各行之和；每行 `keep` 不能超过 `count × max_rounds`。都不填则所有候选混排、全局取前 `keep_top_k` 台。Web 向导里每个机型行有"最终保留（台）"，顶部合计自动更新；确认页按机型列出各自保留数。
+
 ## 多轮运行与保护
 
 ```bash

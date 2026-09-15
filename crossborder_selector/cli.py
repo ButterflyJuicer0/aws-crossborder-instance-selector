@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from dataclasses import replace
 
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 from crossborder_selector.aws.ec2 import Ec2Manager
 from crossborder_selector.aws.infra import (ensure_infra, delete_infra, delete_shared_iam, security_group_name,
@@ -30,7 +31,28 @@ def new_run_id() -> str:
 
 
 def default_factory(cfg) -> dict:
-    return {name: boto3.client(name, region_name=cfg.region) for name in ("ec2", "iam", "ssm")}
+    return {name: boto3.client(name, region_name=cfg.region) for name in ("ec2", "iam", "ssm", "sts")}
+
+
+def current_profile() -> str:
+    return os.environ.get("AWS_PROFILE") or os.environ.get("AWS_DEFAULT_PROFILE") or "default"
+
+
+def verify_credentials(clients):
+    """真实运行前用 STS 确认凭证可用。成功返回身份 dict（工厂没提供 sts 客户端时返回 {}，测试替身场景）；
+    失败打印可执行的提示并返回 None，由调用方以退出码 2 结束，避免打印出一个空的 run-id 再甩 traceback。"""
+    sts = clients.get("sts") if isinstance(clients, dict) else None
+    if sts is None:
+        return {}
+    try:
+        ident = sts.get_caller_identity()
+    except (ClientError, BotoCoreError) as exc:
+        print(f"AWS 凭证不可用（profile={current_profile()}）：{exc}\n"
+              f"请 export AWS_PROFILE=<name> 指定有效 profile，或先 aws configure / aws login；"
+              f"--dry-run 不需要凭证。", file=sys.stderr)
+        return None
+    print(f"AWS 身份: {ident.get('Arn')} (账户 {ident.get('Account')}, profile={current_profile()})")
+    return ident
 
 
 def agent_ssm_runner(agent_cfg):
@@ -189,8 +211,10 @@ def _do_select(args, factory) -> int:
     if args.dry_run:
         print(plan_summary(cfg, run_id))
         return 0
-    print(f"run-id: {run_id}  (cleanup: python -m crossborder_selector.cli cleanup --region {cfg.region} --run-id {run_id})")
     clients = factory(cfg)
+    if verify_credentials(clients) is None:  # 凭证不可用时在这里退出，不生成空的 run-id
+        return 2
+    print(f"run-id: {run_id}  (cleanup: python -m crossborder_selector.cli cleanup --region {cfg.region} --run-id {run_id})")
     sources = resolve_probe_sources(cfg)
     if cfg.backends["agent"]["enabled"]:
         print(f"agent 拨测来源: {sources or '无（不开放 TCP，仅 ICMP 可测）'}")

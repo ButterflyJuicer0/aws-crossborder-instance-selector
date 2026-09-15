@@ -2,6 +2,36 @@
 
 ## 安装与配置
 
+### 安装 AWS CLI v2 与配置凭证
+
+选择器通过 boto3 调用 AWS，凭证由 AWS CLI 的配置文件（`~/.aws/config`、`~/.aws/credentials`）提供。先装 CLI：
+
+```bash
+# macOS
+brew install awscli            # 或下载官方 pkg：https://awscli.amazonaws.com/AWSCLIV2.pkg
+# Linux x86_64
+curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip && unzip -q awscliv2.zip && sudo ./aws/install
+# Linux arm64：把 x86_64 换成 aarch64
+# Windows：下载 https://awscli.amazonaws.com/AWSCLIV2.msi 安装，或 winget install Amazon.AWSCLI
+aws --version                  # 期望 aws-cli/2.x
+```
+
+官方安装文档：https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+
+然后配置一个 profile 并验证：
+
+```bash
+aws configure --profile <name>     # 静态密钥；SSO 用 aws configure sso；根账户/身份中心登录用 aws login --profile <name>
+export AWS_PROFILE=<name>
+aws sts get-caller-identity        # 能看到 Account 与 Arn 即可
+```
+
+中国区账户是独立分区：profile 的 `region` 填 `cn-north-1` 或 `cn-northwest-1`，调用 STS/IAM 时也要带 `--region cn-north-1`，否则 CLI 会走全球分区端点报 InvalidClientTokenId。
+
+没有凭证时：`--dry-run` 与 `--demo` 照常可用；真实运行 CLI 会在启动前用 STS 预检，打印"AWS 凭证不可用（profile=…）"并以退出码 2 结束，Web 向导会在页脚显示"未通过 STS 校验"并拒绝开始。
+
+### 安装选择器
+
 全新机器请先按 [README 的"从零开始"](README.md#从零开始一台全新机器) 装好 Python 3.11+、git、AWS CLI 并配置凭证。
 
 ```bash

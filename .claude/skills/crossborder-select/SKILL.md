@@ -51,7 +51,7 @@ metadata:
 - [ ] 1 与用户确认区域、每轮数量、轮次、保留数、是否 --protect；真实运行产生费用，保留实例持续计费
 - [ ] 2 确认 config.yaml 存在（没有就 cp config.example.yaml config.yaml）；无默认 VPC 时填顶层键 `subnet_id: subnet-xxx`（须有出网路径且自动分配公网 IPv4），或命令行追加 --subnet-id
 - [ ] 3 跑 --dry-run，核对区域、数量、探测源、目标和安全组说明
-- [ ] 4 确认凭证：export AWS_PROFILE=<profile>（需要时）后 aws sts get-caller-identity；区域为 opt-in 时确认账户已启用。Web 向导页脚会显示当前 profile、账户、ARN，STS 失败也会显示 profile 名和原因
+- [ ] 4 确认凭证：export AWS_PROFILE=<profile>（需要时）后 aws sts get-caller-identity；区域为 opt-in 时确认账户已启用。Web 向导页脚会显示当前 profile、账户、ARN，STS 失败也会显示 profile 名和原因；CLI 真实运行前也会用 STS 预检，凭证不可用时打印"AWS 凭证不可用（profile=…）"并以退出码 2 结束，不生成 run-id。没装 AWS CLI 先看 MANUAL"安装 AWS CLI v2 与配置凭证"
 - [ ] 5 真实运行；第一行输出 run-id，立即记下并告知用户
 - [ ] 6 读 out/<run-id>/report.md：winners、stop_reason、每轮淘汰数、backend_errors
 - [ ] 7 提醒：保留实例不要 stop/start（换公网 IP），reboot 通常保留；实例内关机被设为 stop

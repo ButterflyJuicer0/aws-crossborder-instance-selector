@@ -13,8 +13,10 @@
 ```bash
 python3 --version          # ≥ 3.11
 git --version
-aws --version              # aws-cli/2.x；没有就先安装：https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+aws --version              # aws-cli/2.x；没有就先安装（macOS: brew install awscli；Linux: 官方 zip；Windows: msi）
 ```
+
+AWS CLI 各平台安装命令与凭证配置见 [MANUAL 的"安装 AWS CLI v2 与配置凭证"](MANUAL.md#安装-aws-cli-v2-与配置凭证)，官方文档：https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
 
 **2. 取代码并装依赖**
 

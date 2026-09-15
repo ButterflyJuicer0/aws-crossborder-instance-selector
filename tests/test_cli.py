@@ -155,3 +155,45 @@ def test_probe_source_cidrs_prefers_public_ip_and_drops_private_or_loopback():
     assert probe_source_cidrs(base, registry={"only": {"ip": "127.0.0.1"}}) == []
     # s3 也能用 registry（来自 S3 心跳）
     assert probe_source_cidrs({**base, "transport": "s3"}, registry={"cn": {"public_ip": "198.51.100.9"}}) == ["198.51.100.9/32"]
+
+
+def test_select_without_credentials_fails_fast_with_hint(monkeypatch, capsys):
+    from botocore.exceptions import NoCredentialsError
+    calls = {"infra": 0}
+    monkeypatch.setattr(cli, "ensure_infra", lambda *a, **k: calls.__setitem__("infra", calls["infra"] + 1))
+    monkeypatch.setenv("AWS_PROFILE", "stale")
+
+    class BadSts:
+        def get_caller_identity(self): raise NoCredentialsError()
+    factory = lambda cfg: {"ec2": object(), "iam": object(), "ssm": object(), "sts": BadSts()}
+    rc = cli.main(["select", "--region", "us-east-1", "--disable-backend", "globalping"], factory=factory)
+    cap = capsys.readouterr()
+    assert rc == 2 and calls["infra"] == 0
+    assert "凭证" in cap.err and "profile=stale" in cap.err and "AWS_PROFILE" in cap.err and "--dry-run" in cap.err
+    assert "run-id:" not in cap.out  # 凭证不可用时不生成空的 run
+
+
+def test_select_prints_identity_when_credentials_ok(monkeypatch, capsys):
+    from crossborder_selector.models import Candidate, CandidateScore
+    win = CandidateScore(Candidate("i-1", "1.2.3.4"), None, [], {}, {}, 91.0, True)
+    class FakeResult: stop_reason, winners = "max_rounds", [win]
+    class FakeOrch:
+        def __init__(self, *a, **k): pass
+        def run(self): return FakeResult()
+    monkeypatch.setattr(cli, "ensure_infra", lambda *a, **k: object())
+    monkeypatch.setattr(cli, "load_ip_ranges", lambda **k: [])
+    monkeypatch.setattr(cli, "Orchestrator", FakeOrch)
+    monkeypatch.setattr(cli, "write_reports", lambda *a, **k: {"json": "j", "md": "m", "csv": "c"})
+    class Sts:
+        def get_caller_identity(self): return {"Account": "123456789012", "Arn": "arn:aws:iam::123456789012:user/me"}
+    factory = lambda cfg: {"ec2": object(), "iam": object(), "ssm": object(), "sts": Sts()}
+    rc = cli.main(["select", "--region", "us-east-1", "--disable-backend", "globalping"], factory=factory)
+    cap = capsys.readouterr()
+    assert rc == 0 and "arn:aws:iam::123456789012:user/me" in cap.out and "run-id:" in cap.out
+
+
+def test_default_factory_includes_sts():
+    import boto3
+    cfg = load_config(None, {"region": "us-east-1"})
+    clients = cli.default_factory(cfg)
+    assert {"ec2", "iam", "ssm", "sts"} <= set(clients) and clients["sts"].meta.service_model.service_name == "sts"

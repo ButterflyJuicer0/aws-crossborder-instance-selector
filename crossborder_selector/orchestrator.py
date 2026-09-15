@@ -146,10 +146,19 @@ class Orchestrator:
                                "reason": v.veto_reason} for v in vetoed])
 
             if survivors:
+                self.log(f"[round {rno}] 等待 SSM 上线：{len(survivors)} 台，最多 {self.cfg.ssm_online_timeout_s} s")
                 online = self.ssm.wait_online([c.instance_id for c, _ in survivors], self.cfg.ssm_online_timeout_s)
                 for c, _ in survivors:
                     c.ssm_online = c.instance_id in online
-                results, errors = run_backends(self.backends, [c for c, _ in survivors])
+                self.log(f"[round {rno}] SSM 在线 {len(online)}/{len(survivors)} 台")
+                names = [b.name for b in self.backends]
+                longest = max((int(self.cfg.backends.get(n, {}).get("timeout_s", 0)) for n in names), default=0)
+                self.log(f"[round {rno}] 探测中：{', '.join(names)}；各源并行，最长等待约 {longest} s，"
+                         f"期间没有新日志是正常的")
+                results, errors = run_backends(
+                    self.backends, [c for c, _ in survivors],
+                    on_done=lambda name, err, elapsed: self.log(
+                        f"[round {rno}] {name} 完成（{elapsed:.0f} s）" + (f"：{err[:120]}" if err else "")))
             else:  # 无幸存者：跳过上线等待与拨测
                 results, errors = {}, {}
             scored = [score_candidate(c, rep, results.get(c.public_ip, []), self.cfg.weights,

@@ -348,3 +348,15 @@ def test_keep_zero_type_is_only_a_control_group():
     rr = Orchestrator(cfg, ec2, FakeSsm(), [be], [], lambda ip: "", INFRA, "xb-zero", log=lambda *a: None).run()
     assert [w.candidate.instance_type for w in rr.winners] == ["a1.2xlarge"]
     assert set(ec2.live) == {"i-3"}
+
+
+def test_round_logs_probe_progress():
+    logs = []
+    ec2 = FakeEc2(["10.0.0.1", "10.0.0.2"])
+    orch = Orchestrator(_cfg(max_rounds=1), ec2, FakeSsm(), [ScriptedBackend({"10.0.0.1": 50.0, "10.0.0.2": 60.0})], [],
+                        lambda ip: "", INFRA, "xb-log", log=logs.append)
+    orch.run()
+    text = "\n".join(str(l) for l in logs)
+    assert "等待 SSM 上线" in text and "180" in text                 # ssm_online_timeout_s
+    assert "探测中" in text and "reverse" in text and "最长" in text   # 列出探测源与最长等待
+    assert "reverse 完成" in text                                     # 每个探测源完成时有一行

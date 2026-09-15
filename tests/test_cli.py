@@ -204,3 +204,17 @@ def test_plan_summary_shows_per_type_keep():
                                                  {"instance_type": "a1.2xlarge", "count": 1, "keep": 1}]})
     text = cli.plan_summary(cfg, "xb-x")
     assert "keep_top_k=3" in text and "t4g.micro" in text and "keep=2" in text and "a1.2xlarge" in text and "keep=1" in text
+
+
+def test_estimate_agent_seconds_and_plan_warns_when_timeout_too_short():
+    from crossborder_selector.cli import estimate_agent_seconds
+    # 20 个目标、8 并发：3 批 × (10×0.2s ping + 2s 余量 + 1 端口×5 次×3s TCP) + 10s 固定开销
+    assert estimate_agent_seconds(20, ping_count=10, tcp_ports=[443], tcp_count=5) == 3 * (2 + 2 + 15) + 10
+    assert estimate_agent_seconds(1, 10, [443], 5) == 1 * 19 + 10
+    cfg = load_config(None, {"batch_size": 20, "backends": {"agent": {"enabled": True, "transport": "http",
+                                                                        "timeout_s": 30, "tcp_ports": [443]}}})
+    text = cli.plan_summary(cfg, "xb-x")
+    assert "agent" in text and "timeout_s=30" in text and "约 67s" in text and "不足" in text
+    ok = load_config(None, {"batch_size": 20, "backends": {"agent": {"enabled": True, "transport": "http",
+                                                                       "timeout_s": 180, "tcp_ports": [443]}}})
+    assert "不足" not in cli.plan_summary(ok, "xb-y")

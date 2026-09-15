@@ -186,3 +186,18 @@ def test_s3_transport_writes_heartbeat_with_public_ip(agent, monkeypatch):
         body = json.loads(s3.get_object(Bucket="xb-agent", Key="p/registry/cn-box.json")["Body"].read())
         assert body["agent_id"] == "cn-box" and body["isp"] == "mobile" and body["public_ip"] == "198.51.100.9"
         assert body["last_seen"] > 0
+
+
+def test_probe_targets_runs_targets_concurrently_and_keeps_order(agent, monkeypatch):
+    import time as _t
+    def slow_ping(ip, count):
+        _t.sleep(0.3); return [float(ip.split(".")[-1])]
+    monkeypatch.setattr(agent, "run_ping", slow_ping)
+    monkeypatch.setattr(agent, "tcp_connect_times", lambda ip, port, attempts, timeout_s=3.0: [1.0])
+    ips = [f"10.0.0.{i}" for i in range(1, 9)]
+    t0 = _t.time()
+    items = agent.probe_targets(ips, ping_count=1, tcp_ports=[443], tcp_count=1)
+    elapsed = _t.time() - t0
+    assert [i["ip"] for i in items] == ips                       # 顺序不变
+    assert [i["ping"]["rtts"] for i in items] == [[float(n)] for n in range(1, 9)]
+    assert elapsed < 1.5, f"8 个目标应并发完成，实际 {elapsed:.1f}s（串行约 2.4s）"

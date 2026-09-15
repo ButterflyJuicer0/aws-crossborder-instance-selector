@@ -105,14 +105,23 @@ def tcp_connect_times(ip: str, port: int, attempts: int, timeout_s: float = 3.0)
     return out
 
 
+MAX_WORKERS = 8  # 同时探测的目标数；选择器按同一并发数估算任务耗时
+
+
+def probe_one(ip: str, ping_count: int, tcp_ports: list, tcp_count: int) -> dict:
+    rtts = run_ping(ip, ping_count)
+    tcp = [{"port": int(p), "attempts": int(tcp_count), "connect_ms": tcp_connect_times(ip, int(p), int(tcp_count))}
+           for p in tcp_ports]
+    return {"ip": ip, "ping": {"sent": int(ping_count), "rtts": rtts}, "tcp": tcp}
+
+
 def probe_targets(ips: list, ping_count: int, tcp_ports: list, tcp_count: int) -> list:
-    items = []
-    for ip in ips:
-        rtts = run_ping(ip, ping_count)
-        tcp = [{"port": int(p), "attempts": int(tcp_count), "connect_ms": tcp_connect_times(ip, int(p), int(tcp_count))}
-               for p in tcp_ports]
-        items.append({"ip": ip, "ping": {"sent": int(ping_count), "rtts": rtts}, "tcp": tcp})
-    return items
+    """并发探测全部目标，结果顺序与输入一致。串行时 20 个目标要 6–8 分钟，选择器等不到。"""
+    from concurrent.futures import ThreadPoolExecutor
+    if not ips:
+        return []
+    with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(ips))) as pool:
+        return list(pool.map(lambda ip: probe_one(ip, ping_count, tcp_ports, tcp_count), ips))
 
 
 # ---------- 传输 ----------

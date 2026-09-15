@@ -228,7 +228,8 @@ Web 已保留但最终未选定的实例，应使用“终止其余保留候选�
 
 | 现象 | 检查内容 |
 |---|---|
-| `agent_unavailable` | ssm：实例是否 SSM Online、`profile`/`region` 是否正确；http：agent 是否指向正确地址与 token（页面 registry 或 `GET /api/agent/registry` 能否看到它）、`timeout_s` 是否够 agent 完成一轮；s3：bucket/prefix 与凭证；报告 `probe_results` 中 agent 条目的 error |
+| `agent_unavailable`（整轮全部） | 最常见是 `backends.agent.timeout_s` 小于 agent 完成一轮的时间：agent 日志里"job … submitted"晚于选择器的 round_done。计划摘要和 Web agent 面板会给出"预计每轮任务约 N s"，把 `timeout_s` 提到 ≥ N（默认 180；每轮 20 台、1 个端口约 70s）。其次：ssm 实例是否 SSM Online、`profile`/`region` 是否正确；http：agent 是否指向正确地址与 token（面板能否看到它）；s3：bucket/prefix 与凭证；报告 `probe_results` 中 agent 条目的 error |
+| agent 的 TCP 全部超时、ICMP 正常 | 拨测来源 IP 与 agent 实际出口不一致：公司/NAT 出口在多个 IP 间轮换（如 .250/.251），自动放行只覆盖自报的那一个。在面板"拨测来源 CIDR"填出口网段，或让 agent 走固定出口 |
 | `reverse_unavailable` | SSM 注册状态、实例角色、出网路径和报告中的具体错误 |
 | `reverse_incomplete` | 反向探测是否返回全部配置运营商的样本 |
 | `reverse_unreachable` / `unreachable` | 配置目标是否响应，外部探测的安全组、网络 ACL 和路由是否允许；不要直接认定整个运营商网络不可达 |

@@ -244,13 +244,20 @@ class Api:
 
     def agent_status(self, cfg=None) -> dict:
         """agent 面板数据：传输方式、已连接 agent、自动解析出的拨测来源。"""
-        from crossborder_selector.cli import probe_source_cidrs, agent_broker, agent_instance_public_ips
+        from crossborder_selector.cli import probe_source_cidrs, agent_broker, agent_instance_public_ips, agent_timing
         from crossborder_selector.probes import agent_transport
         cfg = cfg or self.load({})
         a = cfg.backends["agent"]
+        timing = agent_timing(cfg)
         out = {"enabled": bool(a["enabled"]), "transport": a["transport"], "tcp_ports": list(a["tcp_ports"]),
                "min_agents": a["min_agents"], "probe_source_cidrs": list(a.get("probe_source_cidrs") or []),
+               "timeout_s": timing["timeout_s"], "estimated_job_seconds": timing["estimated_job_seconds"],
                "agents": [], "resolved_sources": [], "source_mode": "none", "notes": []}
+        if a["enabled"] and timing["too_short"]:
+            out["notes"].append(f"backends.agent.timeout_s={timing['timeout_s']} 小于每轮任务预计耗时约 "
+                                f"{timing['estimated_job_seconds']}s（{cfg.batch_size} 个目标）：选择器会在 agent 回传前放弃等待，"
+                                f"全部候选将按 agent_unavailable 否决。请把 timeout_s 提高到 ≥ {timing['estimated_job_seconds']}，"
+                                "或减少每轮台数 / TCP 端口数。")
         registry, instance_ips = {}, None
         if a["transport"] == "http":
             registry = agent_transport.shared_store().registry()

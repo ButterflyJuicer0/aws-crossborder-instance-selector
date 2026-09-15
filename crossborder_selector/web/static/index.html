@@ -600,7 +600,7 @@ function agentPanelMarkup(){
   return `<div class="field full" id="agent-panel"><label>agent 探针（China → AWS）<span class="hint" style="margin-left:8px">传输：<code id="agent-transport">${esc(a.transport||"ssm")}</code></span></label>
     <div class="field-grid agent-fields">
       <div class="field"><label for="agent-tcp-ports">TCP 探测端口</label><input id="agent-tcp-ports" value="${esc((a.tcp_ports||[]).join(","))}" placeholder="443"><p class="hint">业务真实端口，逗号分隔。</p></div>
-      <div class="field"><label for="agent-probe-sources">拨测来源 CIDR</label><input id="agent-probe-sources" value="${esc((a.probe_source_cidrs||[]).join(", "))}" placeholder="自动"><p class="hint">留空 = 自动取已连接 agent 自报的公网出口。</p></div>
+      <div class="field"><label for="agent-probe-sources">拨测来源 CIDR</label><input id="agent-probe-sources" value="${esc((a.probe_source_cidrs||[]).join(", "))}" placeholder="自动"><p class="hint">留空 = 自动取已连接 agent 自报的公网出口。公司/NAT 出口可能在多个 IP 间轮换，此时请填出口网段。</p></div>
     </div>
     <div id="agent-status" class="hint" aria-live="polite">agent：读取中…</div>
     <p class="hint">候选机在运行期间通过独立的拨测安全组只向上述来源开放上述端口，运行结束保留实例自动摘除；ICMP 由共享安全组放行。在客户机器上运行下面的命令即可接入，agent 会自报公网出口 IP：</p>
@@ -635,8 +635,9 @@ function refreshAgentStatus(){
                            : `<p>尚无已连接的 agent。</p>`;
       const mode = {explicit:"手动指定", auto:"自动（来自 agent 自报/连接来源）", none:"无"}[s.source_mode] || s.source_mode;
       const sources = (s.resolved_sources||[]).length ? s.resolved_sources.map(c=>`<code>${esc(c)}</code>`).join(" ") : "<b>无</b>";
+      const timing = s.estimated_job_seconds ? `<p>每轮 agent 任务预计约 <b>${s.estimated_job_seconds}s</b>（${state.form.batch_size} 个目标，8 并发），等待超时 timeout_s=<code>${esc(String(s.timeout_s))}</code>${s.timeout_s < s.estimated_job_seconds ? ' <span class="warn">不足</span>' : ' ✓'}</p>` : "";
       el.innerHTML = `${s.enabled ? "" : "<p><b>agent 探测源未启用</b>，以下仅供参考。</p>"}${table}
-        <p>本次将放行的拨测来源（${esc(mode)}）：${sources} → 端口 <code>${esc((s.tcp_ports||[]).join(","))}</code></p>
+        <p>本次将放行的拨测来源（${esc(mode)}）：${sources} → 端口 <code>${esc((s.tcp_ports||[]).join(","))}</code></p>${timing}
         ${(s.notes||[]).map(n=>`<p class="warn">${esc(n)}</p>`).join("")}`;
     }catch(e){ el.textContent = "agent：状态不可用（"+e.message+"）"; }
   }, 250);

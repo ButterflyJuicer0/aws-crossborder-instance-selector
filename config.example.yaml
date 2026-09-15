@@ -49,7 +49,7 @@ backends:
     ping_count: 10
     tcping_count: 5
     tcping_port: 443
-    timeout_s: 120
+    timeout_s: 180   # 6 个目标 × (10 ping + 5 tcping) 在慢路径上接近 120s，留余量
     # 三网回程探测目标（每个 ISP 至少一个）。可写 host 或 host:port；
     # ping 只用 host 部分，tcping 用条目端口（下面纯 IP 是三网 DNS，走 53），域名回退到 tcping_port
     targets:

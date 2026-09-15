@@ -88,6 +88,27 @@ def usable_probe_source(value) -> str:
     return "" if any(addr in net for net in _NON_ROUTABLE if net.version == addr.version) else str(addr)
 
 
+AGENT_WORKERS = 8          # 与 agent/crossborder_agent.py 的 MAX_WORKERS 一致
+AGENT_PING_INTERVAL_S = 0.2
+AGENT_TCP_TIMEOUT_S = 3.0
+
+
+def estimate_agent_seconds(n_targets: int, ping_count: int, tcp_ports, tcp_count: int) -> int:
+    """agent 完成一轮任务的保守估计（秒）：按并发批次 × 单目标最坏耗时 + 固定开销。
+    单目标最坏 = ping_count×0.2s + 2s 余量 + 端口数×tcp_count×3s（端口被丢包时每次连接等满超时）。"""
+    import math
+    batches = max(1, math.ceil(max(1, int(n_targets)) / AGENT_WORKERS))
+    per_target = int(ping_count) * AGENT_PING_INTERVAL_S + 2 + len(list(tcp_ports)) * int(tcp_count) * AGENT_TCP_TIMEOUT_S
+    return int(math.ceil(batches * per_target + 10))
+
+
+def agent_timing(cfg) -> dict:
+    """agent 任务耗时估计与配置超时的对照，供 plan_summary / Web 面板提示。"""
+    a = cfg.backends["agent"]
+    est = estimate_agent_seconds(cfg.batch_size, a["ping_count"], a["tcp_ports"], a["tcp_count"])
+    return {"estimated_job_seconds": est, "timeout_s": int(a["timeout_s"]), "too_short": int(a["timeout_s"]) < est}
+
+
 def probe_source_cidrs(agent_cfg, registry=None, instance_ips=None) -> list:
     """决定拨测组允许的 TCP 来源。显式配置 > http 已注册 agent 来源 IP > ssm 实例公网 IP > 空（不开 TCP）。"""
     if not agent_cfg.get("enabled"):
@@ -160,6 +181,15 @@ def build_backends(cfg, ssm_runner, agent_ssm=None, agent_broker=None) -> list:
     return out
 
 
+def _agent_plan_line(cfg) -> str:
+    a, t = cfg.backends["agent"], agent_timing(cfg)
+    line = (f"agent: transport={a['transport']}, tcp_ports={a['tcp_ports']}, timeout_s={t['timeout_s']}, "
+            f"预计每轮任务约 {t['estimated_job_seconds']}s（{cfg.batch_size} 个目标，{AGENT_WORKERS} 并发）")
+    if t["too_short"]:
+        line += f"；timeout_s 不足，agent 结果会在收齐前被放弃，请提高到 ≥ {t['estimated_job_seconds']}"
+    return line
+
+
 def plan_summary(cfg, run_id) -> str:
     enabled = [n for n, v in cfg.backends.items() if v["enabled"]
                and not (n == "ripeatlas" and not (v.get("api_key") or "").strip())]
@@ -174,6 +204,7 @@ def plan_summary(cfg, run_id) -> str:
              f"root volume: {cfg.root_volume_size_gib or '<AMI default>'} GiB, {cfg.root_volume_type}, encrypted={cfg.root_volume_encrypted}",
              f"per-instance overrides: {cfg.instance_overrides}",
              f"backends: {', '.join(enabled)}", f"protect winner: {cfg.protect}",
+             *([_agent_plan_line(cfg)] if cfg.backends["agent"]["enabled"] else []),
              "reverse targets: " + "; ".join(f"{k}={','.join(v)}" for k, v in cfg.backends['reverse']['targets'].items()),
              "inbound: IPv4 ICMP Echo Request from 0.0.0.0/0" if needs_inbound_ping(cfg) else "inbound: no probe ingress required",
              "No AWS resources will be created."]

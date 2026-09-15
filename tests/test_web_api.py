@@ -209,3 +209,15 @@ def test_agent_status_lists_agents_and_resolved_sources(tmp_path, monkeypatch):
     assert explicit["resolved_sources"] == ["10.0.0.0/8"] and explicit["source_mode"] == "explicit"
     off = api.agent_status(api.load({}))
     assert off["enabled"] is False and off["resolved_sources"] == []
+
+
+def test_agent_status_warns_when_timeout_shorter_than_estimated_job(tmp_path, monkeypatch):
+    from crossborder_selector.probes import agent_transport as at
+    monkeypatch.setattr(at, "shared_store", lambda: at.AgentJobStore())
+    api = Api(factory=_factory(), cwd=str(tmp_path))
+    cfg = api.load({"batch_size": 20, "backends": {"agent": {"enabled": True, "transport": "http", "timeout_s": 30}}})
+    s = api.agent_status(cfg)
+    assert s["estimated_job_seconds"] == 67 and s["timeout_s"] == 30
+    assert any("timeout_s" in n and "67" in n for n in s["notes"])
+    fine = api.agent_status(api.load({"batch_size": 20, "backends": {"agent": {"enabled": True, "transport": "http", "timeout_s": 200}}}))
+    assert not any("timeout_s" in n for n in fine["notes"])

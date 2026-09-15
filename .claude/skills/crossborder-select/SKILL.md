@@ -113,7 +113,7 @@ aws ec2 describe-instances --region <region> \
 | （运行直接失败）`InsufficientInstanceCapacity` | 所有可尝试的可用区都没有该机型容量 | 报错里列出已尝试子网；换机型、换区域，或指定其他可用区 `subnet_id`。这不是 veto，而是 launch 失败：首轮失败整个 run 失败，后续轮失败 stop_reason=`launch_failed` 并保留在位者 |
 | `reputation` | 任一信誉源命中 | `reputation_results[]` 中 `listed=true` 的 source 和 detail；属正常淘汰，多跑几轮换 IP |
 | `reputation_unavailable` | GitHub 名单检查失败且 `require_badlist: true`，未进入探测 | `badlist_url` 是否返回原始文本；修 URL 或出网后重跑 |
-| `agent_unavailable` | 启用了 agent 但没有任何 agent 实例返回样本 | 中国区实例是否 SSM Online、`backends.agent.profile/region` 是否正确、agent 条目的 error |
+| `agent_unavailable` | 启用了 agent 但没有任何 agent 实例返回样本 | 整轮全部命中时先查 `timeout_s` 是否小于面板/计划摘要给的"预计每轮任务约 N s"（agent 日志 submitted 晚于 round_done 即是），提高 timeout_s；再查中国区实例是否 SSM Online、`backends.agent.profile/region`、agent 条目的 error |
 | `reverse_unavailable` | 反向探测无结果或解析失败 | SSM 是否 Online、实例角色、出网路径、`probe_results` 的 error |
 | `reverse_incomplete` | 反向探测返回了，但样本未同时覆盖 telecom/unicom/mobile | 对比报告内 `config.backends.reverse.targets` 与当前配置，三个键都要有目标；补全后重跑，旧候选已终止不能补测 |
 | `reverse_unreachable` | 反向探测全部目标 0 回包 | 目标是否可达、ICMP 是否被限速；换 `targets`，不要直接判定整个运营商不可达 |

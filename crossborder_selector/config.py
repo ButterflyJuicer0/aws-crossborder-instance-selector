@@ -42,7 +42,7 @@ DEFAULTS = {
             "ping_count": 10,
             "tcping_count": 5,
             "tcping_port": 443,
-            "timeout_s": 120,
+            "timeout_s": 180,
             # 目标可写 host 或 host:port；纯 IP 是三网 DNS 服务器（走 53），域名走默认 tcping_port
             "targets": {
                 "telecom": ["114.114.114.114:53", "www.189.cn"],

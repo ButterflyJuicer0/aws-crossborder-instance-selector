@@ -113,3 +113,12 @@ def test_agent_transport_defaults_and_validation():
                 {"transport": "http", "http": {"listen": "not-a-listen"}}, {"min_agents": 0}):
         with pytest.raises(ValueError):
             load_config(None, {"backends": {"agent": bad}})
+
+
+def test_agent_probe_source_cidrs_default_and_validation():
+    assert load_config(None).backends["agent"]["probe_source_cidrs"] == []
+    ok = load_config(None, {"backends": {"agent": {"probe_source_cidrs": ["203.0.113.7/32", "198.51.100.0/24"]}}})
+    assert ok.backends["agent"]["probe_source_cidrs"] == ["203.0.113.7/32", "198.51.100.0/24"]
+    for bad in (["not-a-cidr"], ["203.0.113.7"], "203.0.113.7/32", [1]):
+        with pytest.raises(ValueError):
+            load_config(None, {"backends": {"agent": {"probe_source_cidrs": bad}}})

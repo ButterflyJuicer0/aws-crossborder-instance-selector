@@ -69,7 +69,31 @@ class Orchestrator:
             self.ec2.mark_winner(w.candidate.instance_id, self.run_id, w.composite, w.candidate.round, self.now())
             if self.cfg.protect:
                 self.ec2.protect(w.candidate.instance_id)
+        self._retire_probe_access(incumbents)
         return RunResult(self.run_id, self.cfg.region, rounds, incumbents, started, self.now(), stop)
+
+    def _retire_probe_access(self, incumbents):
+        """保留实例回到"只带共享组"的状态：摘掉本次拨测组、停掉临时监听，再删除拨测组。任何一步失败只记日志。"""
+        probe_sg = getattr(self.infra, "probe_security_group_id", "")
+        if not probe_sg:
+            return
+        from crossborder_selector.aws.infra import STOP_LISTENER_SCRIPT
+        for w in incumbents:
+            iid = w.candidate.instance_id
+            try:
+                self.ec2.detach_probe_group(iid, probe_sg)
+            except Exception as e:  # noqa: BLE001 - 收尾动作不应让已完成的运行失败
+                self.log(f"[retire] {iid} 摘除拨测组失败：{e}")
+            try:
+                status, _ = self.ssm.run_script(iid, STOP_LISTENER_SCRIPT, timeout_s=60)
+                if status != "Success":
+                    self.log(f"[retire] {iid} 停止临时监听返回 {status}")
+            except Exception as e:  # noqa: BLE001
+                self.log(f"[retire] {iid} 停止临时监听失败：{e}")
+        try:
+            self.ec2.delete_security_group(probe_sg)
+        except Exception as e:  # noqa: BLE001
+            self.log(f"[retire] 删除拨测组 {probe_sg} 失败：{e}；可用 cleanup --run-id 重试")
 
     def _round(self, rno, ids, incumbents) -> RoundResult:
         terminated = []

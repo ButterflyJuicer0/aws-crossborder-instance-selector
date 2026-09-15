@@ -280,3 +280,38 @@ def test_orchestrator_vetoes_when_agent_enabled_but_agent_returns_nothing():
     rr = orch.run()
     assert orch.agent_enabled is True
     assert rr.winners == [] and rr.rounds[0].scored[0].veto_reason == "agent_unavailable"
+
+
+def test_winner_loses_probe_group_and_listener_and_probe_group_is_deleted():
+    class ProbeEc2(FakeEc2):
+        def __init__(self, ips):
+            super().__init__(ips); self.detached, self.deleted_groups = [], []
+        def detach_probe_group(self, iid, gid): self.detached.append((iid, gid))
+        def delete_security_group(self, gid, attempts=6): self.deleted_groups.append(gid); return True
+
+    class ProbeSsm(FakeSsm):
+        def __init__(self): super().__init__(); self.scripts = []
+        def run_script(self, iid, script, timeout_s=60): self.scripts.append((iid, script)); return "Success", ""
+
+    ec2, ssm = ProbeEc2(["10.0.0.1", "10.0.0.2"]), ProbeSsm()
+    infra = Infra("subnet-1", "sg-1", "prof", "ami-1", probe_security_group_id="sg-probe",
+                  user_data="#!/bin/bash\n# crossborder_listener\n")
+    orch = Orchestrator(_cfg(max_rounds=1), ec2, ssm, [ScriptedBackend({"10.0.0.1": 50.0, "10.0.0.2": 200.0})], [],
+                        lambda ip: "", infra, "xb-probe", log=lambda *a: None)
+    rr = orch.run()
+    winner = rr.winners[0].candidate.instance_id
+    assert ec2.detached == [(winner, "sg-probe")]                     # 只对保留实例摘组
+    assert any(iid == winner and "crossborder_listener" in s for iid, s in ssm.scripts)  # 停掉临时监听
+    assert ec2.deleted_groups == ["sg-probe"]                        # 拨测组随运行结束删除
+
+
+def test_no_probe_group_means_no_detach_or_delete():
+    class ProbeEc2(FakeEc2):
+        def __init__(self, ips):
+            super().__init__(ips); self.detached, self.deleted_groups = [], []
+        def detach_probe_group(self, iid, gid): self.detached.append((iid, gid))
+        def delete_security_group(self, gid, attempts=6): self.deleted_groups.append(gid); return True
+    ec2 = ProbeEc2(["10.0.0.1"])
+    Orchestrator(_cfg(max_rounds=1, batch_size=1), ec2, FakeSsm(), [ScriptedBackend({})], [], lambda ip: "", INFRA,
+                 "xb-plain", log=lambda *a: None).run()
+    assert ec2.detached == [] and ec2.deleted_groups == []

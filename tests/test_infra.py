@@ -132,8 +132,58 @@ def test_ensure_infra_records_alternate_subnets_in_other_azs():
 def test_explicit_subnet_has_no_alternates():
     ec2, iam, ssm = _clients()
     _seed_ami(ssm, ec2)
-    vpc = ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])["Vpcs"][0]["VpcId"]
-    subnet = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc]}])["Subnets"][0]["SubnetId"]
+    # 选一个确实提供该机型的子网：直接复用自动选择的结果
+    subnet = ensure_infra(ec2, iam, ssm, load_config(None, {"region": REGION})).subnet_id
     cfg = load_config(None, {"region": REGION, "subnet_id": subnet})
     infra = ensure_infra(ec2, iam, ssm, cfg)
     assert infra.subnet_id == subnet and infra.alternate_subnets.get(cfg.instance_type, []) == []
+
+
+# ---- 每次运行独立的拨测安全组 ----
+
+def _default_vpc(ec2):
+    return ec2.describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])["Vpcs"][0]["VpcId"]
+
+
+@mock_aws
+def test_probe_security_group_opens_only_configured_tcp_ports_from_given_sources():
+    from crossborder_selector.aws.infra import ensure_probe_security_group, delete_probe_security_group, probe_sg_name, RUN_TAG_KEY
+    ec2, _, _ = _clients()
+    vpc = _default_vpc(ec2)
+    gid = ensure_probe_security_group(ec2, vpc, "xb-p1", [443, 8443], ["203.0.113.7/32", "198.51.100.0/24"])
+    g = ec2.describe_security_groups(GroupIds=[gid])["SecurityGroups"][0]
+    assert g["GroupName"] == probe_sg_name("xb-p1") == "crossborder-probe-xb-p1"
+    tags = {t["Key"]: t["Value"] for t in g["Tags"]}
+    assert tags["crossborder-managed"] == "true" and tags[RUN_TAG_KEY] == "xb-p1"
+    rules = {(r["IpProtocol"], r["FromPort"], r["ToPort"], tuple(sorted(i["CidrIp"] for i in r["IpRanges"])))
+             for r in g["IpPermissions"]}
+    assert rules == {("tcp", 443, 443, ("198.51.100.0/24", "203.0.113.7/32")),
+                     ("tcp", 8443, 8443, ("198.51.100.0/24", "203.0.113.7/32"))}
+    assert ensure_probe_security_group(ec2, vpc, "xb-p1", [443, 8443], ["203.0.113.7/32", "198.51.100.0/24"]) == gid  # 幂等
+    assert delete_probe_security_group(ec2, "xb-p1") is True
+    assert not ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [probe_sg_name("xb-p1")]}])["SecurityGroups"]
+    assert delete_probe_security_group(ec2, "xb-p1") is False  # 不存在时返回 False，不抛
+
+
+@mock_aws
+def test_probe_security_group_without_sources_is_not_created():
+    from crossborder_selector.aws.infra import ensure_probe_security_group
+    ec2, _, _ = _clients()
+    assert ensure_probe_security_group(ec2, _default_vpc(ec2), "xb-p2", [443], []) == ""
+
+
+@mock_aws
+def test_ensure_infra_with_probe_sources_sets_probe_group_and_listener_user_data():
+    ec2, iam, ssm = _clients()
+    _seed_ami(ssm, ec2)
+    cfg = load_config(None, {"region": REGION, "backends": {"agent": {"enabled": True, "transport": "http",
+                                                                        "tcp_ports": [443, 22]}}})
+    infra = ensure_infra(ec2, iam, ssm, cfg, run_id="xb-p3", probe_source_cidrs=["203.0.113.7/32"])
+    assert infra.probe_security_group_id.startswith("sg-") and infra.probe_security_group_id != infra.security_group_id
+    assert "443" in infra.user_data and "22" in infra.user_data and "crossborder_listener" in infra.user_data
+    # 未提供来源：不建拨测组、不注入监听
+    plain = ensure_infra(ec2, iam, ssm, cfg, run_id="xb-p4", probe_source_cidrs=[])
+    assert plain.probe_security_group_id == "" and plain.user_data == ""
+    # 未启用 agent：即使给了来源也不开 TCP
+    cfg2 = load_config(None, {"region": REGION})
+    assert ensure_infra(ec2, iam, ssm, cfg2, run_id="xb-p5", probe_source_cidrs=["203.0.113.7/32"]).probe_security_group_id == ""

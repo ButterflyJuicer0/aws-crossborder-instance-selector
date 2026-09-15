@@ -9,7 +9,8 @@ from dataclasses import replace
 import boto3
 
 from crossborder_selector.aws.ec2 import Ec2Manager
-from crossborder_selector.aws.infra import ensure_infra, delete_infra, delete_shared_iam, security_group_name, needs_inbound_ping
+from crossborder_selector.aws.infra import (ensure_infra, delete_infra, delete_shared_iam, security_group_name,
+                                            needs_inbound_ping, delete_probe_security_group, probe_sg_name)
 from crossborder_selector.aws.ipranges import load_ip_ranges, PrefixLookup
 from crossborder_selector.aws.ssm import SsmRunner
 from crossborder_selector.config import load_config, launch_groups
@@ -47,6 +48,48 @@ def agent_broker(agent_cfg):
     session = boto3.Session(profile_name=agent_cfg["profile"]) if agent_cfg.get("profile") else boto3.Session()
     s3 = session.client("s3", region_name=agent_cfg["region"]) if agent_cfg.get("region") else session.client("s3")
     return S3AgentBroker(s3, agent_cfg["s3"]["bucket"], agent_cfg["s3"].get("prefix", ""))
+
+
+def probe_source_cidrs(agent_cfg, registry=None, instance_ips=None) -> list:
+    """决定拨测组允许的 TCP 来源。显式配置 > http 已注册 agent 来源 IP > ssm 实例公网 IP > 空（不开 TCP）。"""
+    if not agent_cfg.get("enabled"):
+        return []
+    explicit = [c for c in agent_cfg.get("probe_source_cidrs") or [] if c]
+    if explicit:
+        return explicit
+    ips = set()
+    if agent_cfg.get("transport") == "http":
+        ips = {e.get("ip") for e in (registry or {}).values() if e.get("ip")}
+    elif agent_cfg.get("transport") == "ssm":
+        ips = {ip for ip in (instance_ips or []) if ip}
+    return sorted(f"{ip}/32" for ip in ips)
+
+
+def agent_instance_public_ips(agent_cfg) -> list:
+    """ssm 传输：查 agent 实例的公网 IP，作为拨测来源。查询失败返回空（只测 ICMP）。"""
+    try:
+        session = boto3.Session(profile_name=agent_cfg["profile"]) if agent_cfg.get("profile") else boto3.Session()
+        ec2 = session.client("ec2", region_name=agent_cfg["region"])
+        ids = list(agent_cfg.get("instances") or {})
+        out = []
+        for res in ec2.describe_instances(InstanceIds=ids)["Reservations"]:
+            out += [i.get("PublicIpAddress") for i in res["Instances"] if i.get("PublicIpAddress")]
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def resolve_probe_sources(cfg) -> list:
+    agent = cfg.backends["agent"]
+    if not agent["enabled"]:
+        return []
+    registry, ips = None, None
+    if agent["transport"] == "http":
+        from crossborder_selector.probes.agent_transport import shared_store
+        registry = shared_store().registry()
+    elif agent["transport"] == "ssm":
+        ips = agent_instance_public_ips(agent)
+    return probe_source_cidrs(agent, registry=registry, instance_ips=ips)
 
 
 def build_backends(cfg, ssm_runner, agent_ssm=None, agent_broker=None) -> list:
@@ -121,7 +164,10 @@ def _do_select(args, factory) -> int:
         return 0
     print(f"run-id: {run_id}  (cleanup: python -m crossborder_selector.cli cleanup --region {cfg.region} --run-id {run_id})")
     clients = factory(cfg)
-    infra = ensure_infra(clients["ec2"], clients["iam"], clients["ssm"], cfg)
+    sources = resolve_probe_sources(cfg)
+    if cfg.backends["agent"]["enabled"]:
+        print(f"agent 拨测来源: {sources or '无（不开放 TCP，仅 ICMP 可测）'}")
+    infra = ensure_infra(clients["ec2"], clients["iam"], clients["ssm"], cfg, run_id=run_id, probe_source_cidrs=sources)
     ssm_runner = SsmRunner(clients["ssm"])
     prefixes = load_ip_ranges(cache_path=os.path.join(cfg.output_dir, "ip-ranges.json"))
     ec2mgr = Ec2Manager(clients["ec2"], log=print)
@@ -157,10 +203,15 @@ def _do_cleanup(args, factory) -> int:
         return 2
     cfg = _load(args)
     clients = factory(cfg)
-    m = Ec2Manager(clients["ec2"])
+    m = Ec2Manager(clients["ec2"], log=print)
     ids = m.list_run_instances(args.run_id)
     m.terminate(ids)
     print(f"terminated {len(ids)} instance(s) tagged crossborder-run-id={args.run_id}: {ids}")
+    try:
+        if delete_probe_security_group(clients["ec2"], args.run_id):
+            print(f"deleted probe security group {probe_sg_name(args.run_id)}")
+    except Exception as e:  # noqa: BLE001
+        print(f"probe security group not deleted yet: {e}; rerun cleanup after instances finish terminating", file=sys.stderr)
     if args.include_infra:
         if m.has_winners():
             print("retained instances exist in this region; refusing shared infrastructure cleanup", file=sys.stderr)

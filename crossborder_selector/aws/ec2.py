@@ -16,6 +16,16 @@ _LIVE_STATES = ["pending", "running", "stopping", "stopped"]
 _CAPACITY_CODES = {"InsufficientInstanceCapacity", "InsufficientCapacity"}
 
 
+def instance_group_ids(instance: dict) -> list:
+    """实例的安全组列表。用 NetworkInterfaces 启动时部分实现（含 moto）只在主网卡上报告组。"""
+    groups = [g["GroupId"] for g in instance.get("SecurityGroups", [])]
+    if not groups:
+        for ni in instance.get("NetworkInterfaces", []):
+            if ni.get("Attachment", {}).get("DeviceIndex", 0) == 0 or not groups:
+                groups = [g["GroupId"] for g in ni.get("Groups", [])] or groups
+    return groups
+
+
 class Ec2Manager:
     def __init__(self, client, sleeper=time.sleep, log=None):
         self.ec2 = client
@@ -74,14 +84,21 @@ class Ec2Manager:
     def _launch_in_subnet(self, n, run_id, round_no, infra, instance_type, template, request, subnet_id):
         tags = [{"Key": RUN_TAG, "Value": run_id}, {"Key": ROUND_TAG, "Value": str(round_no)}]
         token = uuid.uuid4().hex
+        groups = [infra.security_group_id]
+        probe_sg = getattr(infra, "probe_security_group_id", "")
+        if probe_sg:
+            groups.append(probe_sg)
+        extra = {}
+        if getattr(infra, "user_data", ""):
+            extra["UserData"] = infra.user_data
         last = None
         for _ in range(6):
             try:
                 r = self.ec2.run_instances(
-                    **request, InstanceType=instance_type, MinCount=n, MaxCount=n, ClientToken=token,
+                    **request, **extra, InstanceType=instance_type, MinCount=n, MaxCount=n, ClientToken=token,
                     IamInstanceProfile={"Name": infra.instance_profile_name},
                     NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": subnet_id,
-                                        "Groups": [infra.security_group_id],
+                                        "Groups": groups,
                                         "AssociatePublicIpAddress": True}],
                     TagSpecifications=[{"ResourceType": "instance", "Tags": tags}],
                     InstanceInitiatedShutdownBehavior="terminate")
@@ -111,6 +128,32 @@ class Ec2Manager:
     def terminate(self, ids):
         if ids:
             self.ec2.terminate_instances(InstanceIds=list(ids))
+
+    def detach_probe_group(self, instance_id: str, probe_group_id: str):
+        """保留实例摘掉拨测组，只留下共享组；已不在列表时不动。"""
+        inst = self.ec2.describe_instances(InstanceIds=[instance_id])["Reservations"][0]["Instances"][0]
+        current = instance_group_ids(inst)
+        remaining = [g for g in current if g != probe_group_id]
+        if remaining != current and remaining:
+            self.ec2.modify_instance_attribute(InstanceId=instance_id, Groups=remaining)
+            self.log(f"{instance_id} 已摘除拨测安全组 {probe_group_id}")
+
+    def delete_security_group(self, group_id: str, attempts: int = 6) -> bool:
+        """删除安全组；实例终止有延迟时报 DependencyViolation，间隔重试。放弃时返回 False 而不抛，供清理兜底。"""
+        for i in range(attempts):
+            try:
+                self.ec2.delete_security_group(GroupId=group_id)
+                return True
+            except ClientError as e:
+                code = e.response["Error"]["Code"]
+                if code == "InvalidGroup.NotFound":
+                    return True
+                if code != "DependencyViolation":
+                    raise
+                if i < attempts - 1:
+                    self._sleep(10)
+        self.log(f"拨测安全组 {group_id} 仍被引用，未删除；可稍后用 cleanup --run-id 再试")
+        return False
 
     def list_run_instances(self, run_id) -> list:
         return [i["InstanceId"] for i in self._run_resources(run_id)

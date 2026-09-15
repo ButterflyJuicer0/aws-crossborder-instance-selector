@@ -68,7 +68,7 @@ aws ec2 describe-instances --region <region> \
 
 带 `crossborder-winner=true` 的是保留实例，cleanup 会跳过它们。
 
-**安全组**：启用任一外部探测源时使用 `crossborder-selector-ping-sg`，向 `0.0.0.0/0` 开放 IPv4 ICMP Echo Request，不开 TCP/UDP；只有反向探测时使用无入站规则的组。安全组和 IAM 实例配置跨运行复用，普通 cleanup 不删。
+**安全组**：启用任一外部探测源时使用 `crossborder-selector-ping-sg`，向 `0.0.0.0/0` 开放 IPv4 ICMP Echo Request，不开 TCP/UDP；只有反向探测时使用无入站规则的组。安全组和 IAM 实例配置跨运行复用，普通 cleanup 不删。启用 agent 时另建按运行的 `crossborder-probe-<run-id>`，只放行 `tcp_ports` 给拨测来源（http 用 agent 来源 IP、ssm 用实例公网 IP、s3 不开 TCP，或 `probe_source_cidrs` 显式指定），候选机 user-data 起临时监听；运行结束保留实例摘组、停监听、删组，保留实例最终只带共享组。日志"agent 拨测来源: 无"表示本轮 TCP 测不到，只有 ICMP。
 
 ## 检查已有 IP
 

@@ -305,7 +305,14 @@ class Api:
 
     def cleanup(self, run_id: str, region: str) -> dict:
         cfg = self.load({"region": region})
-        m = Ec2Manager(self.factory(cfg)["ec2"])
+        ec2 = self.factory(cfg)["ec2"]
+        m = Ec2Manager(ec2)
         ids = m.list_run_instances(run_id)
         m.terminate(ids)
-        return {"run_id": run_id, "terminated": ids}
+        probe_sg_deleted, note = False, ""
+        try:
+            from crossborder_selector.aws.infra import delete_probe_security_group
+            probe_sg_deleted = delete_probe_security_group(ec2, run_id, attempts=1)
+        except Exception as e:  # noqa: BLE001 - 实例仍在终止时会 DependencyViolation，稍后再清
+            note = f"拨测安全组暂未删除：{e}；实例终止完成后再点一次清理"
+        return {"run_id": run_id, "terminated": ids, "probe_sg_deleted": probe_sg_deleted, "note": note}

@@ -1,5 +1,6 @@
 """配置模型：默认值 + YAML 深合并 + CLI 覆盖 + 校验。"""
 import copy
+import ipaddress
 import math
 import re
 from dataclasses import dataclass
@@ -59,6 +60,9 @@ DEFAULTS = {
                   "profile": "", "region": "cn-north-1",   # ssm：agent 实例账户/区域；s3：bucket 凭证/区域
                   "instances": {},            # ssm：{instance_id: isp}；http/s3：可选 {agent_id: isp} 覆盖 agent 自报标签
                   "min_agents": 1,            # http/s3：至少收齐多少台 agent 的结果才结束等待
+                  # 允许访问候选 TCP tcp_ports 的来源 CIDR。空 = 自动：http 用已注册 agent 的来源 IP，
+                  # ssm 用 agent 实例公网 IP，s3 无法得知则不开 TCP（只保留 ICMP）。规则放在每次运行独立的拨测组，保留实例不带
+                  "probe_source_cidrs": [],
                   "http": {"listen": "127.0.0.1:8766", "token": ""},   # 对外暴露时必须设 token 并限制来源
                   "s3": {"bucket": "", "prefix": "crossborder-agent"},
                   "ping_count": 10, "tcp_ports": [443], "tcp_count": 5, "timeout_s": 180},
@@ -260,6 +264,16 @@ def _validate(d: dict) -> None:
     if not isinstance(agent["http"].get("token", ""), str):
         raise ValueError("backends.agent.http.token must be a string")
     number(agent["min_agents"], "backends.agent.min_agents", 1, integer=True)
+    cidrs = agent["probe_source_cidrs"]
+    if not isinstance(cidrs, list):
+        raise ValueError("backends.agent.probe_source_cidrs must be a list of CIDR strings")
+    for cidr in cidrs:
+        if not isinstance(cidr, str) or "/" not in cidr:
+            raise ValueError(f"backends.agent.probe_source_cidrs entries must be CIDR strings like 203.0.113.7/32, got {cidr!r}")
+        try:
+            ipaddress.ip_network(cidr, strict=False)
+        except ValueError as exc:
+            raise ValueError(f"invalid CIDR in backends.agent.probe_source_cidrs: {cidr!r}") from exc
     if not isinstance(agent["region"], str) or not re.fullmatch(r"[a-z]{2}(?:-[a-z0-9]+)+-\d+", agent["region"]):
         raise ValueError("backends.agent.region must be an AWS region code, for example cn-north-1")
     if not isinstance(agent["profile"], str):

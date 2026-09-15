@@ -168,6 +168,8 @@ itdog 使用非官方接口。HTTP 请求具有连接和读取超时；WebSocket
 
 清理识别本次运行归属，并排除 `crossborder-winner=true` 的实例。新版本的保留实例也保留运行 ID 标签，因此不能用“按运行 ID 查询是否为空”判断清理是否完成。
 
+启用 agent 的运行还会有一个 `crossborder-probe-<run-id>` 拨测安全组。正常结束时工具自行删除；中断后 `cleanup --run-id` 在终止实例后补删，实例仍在终止中会提示“暂未删除”，稍后再跑一次即可。保留实例在运行结束时已摘掉该组并停掉临时监听（`pkill -f crossborder_listener`），可用 `aws ec2 describe-instances --instance-ids <id> --query 'Reservations[].Instances[].SecurityGroups'` 核对只剩共享组。
+
 ```bash
 # 额外删除当前区域的受管安全组，共享 IAM 默认保留
 .venv/bin/python -m crossborder_selector.cli cleanup --region <region> --run-id <run-id> --include-infra

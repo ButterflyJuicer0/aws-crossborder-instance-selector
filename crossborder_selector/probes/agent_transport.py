@@ -45,22 +45,28 @@ class AgentJobStore:
             self._claimed[job["job_id"]] = set()
         return job
 
-    def claim(self, agent_id: str, isp: str = ""):
+    def _touch(self, agent_id, isp, remote_addr):
+        entry = self._registry.setdefault(agent_id, {"isp": "", "last_seen": 0.0, "ip": ""})
+        entry.update({"isp": isp or entry.get("isp", ""), "last_seen": self._now()})
+        if remote_addr:  # 来源 IP 用于自动生成拨测组的允许来源；未带地址的调用不覆盖已有值
+            entry["ip"] = remote_addr
+
+    def claim(self, agent_id: str, isp: str = "", remote_addr: str = None):
         with self._lock:
             self._expire()
-            self._registry[agent_id] = {"isp": isp, "last_seen": self._now()}
+            self._touch(agent_id, isp, remote_addr)
             for jid in sorted(self._jobs, key=lambda j: self._jobs[j]["created_at"]):
                 if agent_id not in self._claimed[jid]:
                     self._claimed[jid].add(agent_id)
                     return dict(self._jobs[jid])
         return None
 
-    def submit(self, job_id: str, agent_id: str, isp: str, items: list):
+    def submit(self, job_id: str, agent_id: str, isp: str, items: list, remote_addr: str = None):
         with self._lock:
             if job_id not in self._results:
                 raise KeyError(job_id)
             self._results[job_id][agent_id] = {"isp": isp, "items": list(items), "received_at": self._now()}
-            self._registry[agent_id] = {"isp": isp, "last_seen": self._now()}
+            self._touch(agent_id, isp, remote_addr)
 
     def collect(self, job_id: str, min_agents: int, timeout_s: float, poll_s: float = 1.0) -> dict:
         deadline = self._now() + timeout_s
@@ -93,7 +99,7 @@ def shared_store() -> AgentJobStore:
 
 
 def handle_agent_request(store: AgentJobStore, token: str, method: str, path: str, query: dict,
-                         headers, body: bytes):
+                         headers, body: bytes, remote_addr: str = None):
     """与具体 HTTP 服务器解耦的请求处理，返回 (status, json_obj_or_None)。
 
     Web 服务与独立监听器都调用它，鉴权规则一致：token 非空时必须匹配 Bearer。
@@ -106,7 +112,7 @@ def handle_agent_request(store: AgentJobStore, token: str, method: str, path: st
         agent_id = (query.get("agent_id") or [""])[0].strip()
         if not agent_id:
             return 400, {"error": "agent_id required"}
-        job = store.claim(agent_id, (query.get("isp") or [""])[0].strip())
+        job = store.claim(agent_id, (query.get("isp") or [""])[0].strip(), remote_addr=remote_addr)
         return (200, job) if job else (204, None)
     if method == "GET" and path == "/api/agent/registry":
         return 200, store.registry()
@@ -118,7 +124,7 @@ def handle_agent_request(store: AgentJobStore, token: str, method: str, path: st
         except (ValueError, KeyError, TypeError):
             return 400, {"error": "invalid json body"}
         try:
-            store.submit(job_id, agent_id, isp, items)
+            store.submit(job_id, agent_id, isp, items, remote_addr=remote_addr)
         except KeyError:
             return 404, {"error": "unknown or expired job"}
         return 200, {"accepted": True}
@@ -141,7 +147,7 @@ class AgentHttpServer:
                 length = int(self.headers.get("Content-Length") or 0)
                 body = self.rfile.read(length) if length else b""
                 status, obj = handle_agent_request(outer.store, outer.token, method, u.path, parse_qs(u.query),
-                                                   self.headers, body)
+                                                   self.headers, body, remote_addr=self.client_address[0])
                 payload = b"" if obj is None else json.dumps(obj, ensure_ascii=False).encode()
                 self.send_response(status)
                 if payload:

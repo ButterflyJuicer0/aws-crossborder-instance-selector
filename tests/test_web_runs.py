@@ -45,7 +45,7 @@ class FakeOrch:
 
 
 def _patched(monkeypatch, tmp_path, cfg):
-    monkeypatch.setattr("crossborder_selector.web.runs.ensure_infra", lambda ec2, iam, ssm, c: object())
+    monkeypatch.setattr("crossborder_selector.web.runs.ensure_infra", lambda ec2, iam, ssm, c, **kw: object())
     monkeypatch.setattr("crossborder_selector.web.runs.build_backends", lambda c, s: [])
     monkeypatch.setattr("crossborder_selector.web.runs.build_sources", lambda c: [])
     monkeypatch.setattr("crossborder_selector.web.runs.load_ip_ranges", lambda cache_path=None: [])

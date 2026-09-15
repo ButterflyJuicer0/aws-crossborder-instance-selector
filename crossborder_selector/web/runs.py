@@ -10,7 +10,7 @@ from crossborder_selector.aws.ec2 import Ec2Manager
 from crossborder_selector.aws.infra import ensure_infra
 from crossborder_selector.aws.ipranges import load_ip_ranges, PrefixLookup
 from crossborder_selector.aws.ssm import SsmRunner
-from crossborder_selector.cli import build_backends, new_run_id
+from crossborder_selector.cli import build_backends, new_run_id, resolve_probe_sources
 from crossborder_selector.orchestrator import Orchestrator, utc_now_iso
 from crossborder_selector.report import write_reports, load_history
 from crossborder_selector.reputation.abuseipdb import build_sources
@@ -149,7 +149,10 @@ class RunManager:
         run_id, clients = rec.run_id, None
         try:
             clients = self.api.factory(cfg)
-            infra = ensure_infra(clients["ec2"], clients["iam"], clients["ssm"], cfg)
+            sources = resolve_probe_sources(cfg)
+            if cfg.backends["agent"]["enabled"]:
+                self.emit(run_id, {"type": "log", "message": f"agent 拨测来源: {sources or '无（不开放 TCP，仅 ICMP 可测）'}"})
+            infra = ensure_infra(clients["ec2"], clients["iam"], clients["ssm"], cfg, run_id=run_id, probe_source_cidrs=sources)
             ssm_runner = SsmRunner(clients["ssm"])
             prefixes = load_ip_ranges(cache_path=os.path.join(self.output_dir, "ip-ranges.json"))
             extra = {}

@@ -150,3 +150,53 @@ def test_launch_other_client_errors_do_not_trigger_subnet_fallback():
     with pytest.raises(ClientError):
         Ec2Manager(ec2, sleeper=lambda s: None).launch(1, "xb-cap", 1, infra, "t3.nano")
     assert ec2.calls == ["subnet-a"]
+
+
+# ---- 拨测安全组随实例挂载，保留时摘掉 ----
+
+@mock_aws
+def test_launch_attaches_probe_group_and_user_data_then_detaches_for_winner():
+    from crossborder_selector.aws.infra import Infra
+    ec2, base = _setup()
+    vpc = ec2.describe_security_groups(GroupIds=[base.security_group_id])["SecurityGroups"][0]["VpcId"]
+    probe = ec2.create_security_group(GroupName="crossborder-probe-xb-w", Description="p", VpcId=vpc)["GroupId"]
+    infra = Infra(base.subnet_id, base.security_group_id, base.instance_profile_name, base.image_id,
+                  probe_security_group_id=probe, user_data="#!/bin/bash\necho crossborder_listener\n")
+    m = Ec2Manager(ec2, sleeper=lambda s: None)
+    ids = m.launch(1, "xb-w", 1, infra, "t3.nano")
+    from crossborder_selector.aws.ec2 import instance_group_ids
+    inst = ec2.describe_instances(InstanceIds=ids)["Reservations"][0]["Instances"][0]
+    assert set(instance_group_ids(inst)) == {base.security_group_id, probe}
+    ud = ec2.describe_instance_attribute(InstanceId=ids[0], Attribute="userData")["UserData"].get("Value", "")
+    import base64
+    assert "crossborder_listener" in base64.b64decode(ud).decode()
+    m.detach_probe_group(ids[0], probe)
+    inst = ec2.describe_instances(InstanceIds=ids)["Reservations"][0]["Instances"][0]
+    assert set(instance_group_ids(inst)) == {base.security_group_id}
+    m.detach_probe_group(ids[0], probe)  # 已摘除时幂等
+
+
+@mock_aws
+def test_launch_without_probe_group_keeps_single_group_and_no_user_data():
+    ec2, infra = _setup()
+    ids = Ec2Manager(ec2, sleeper=lambda s: None).launch(1, "xb-n", 1, infra, "t3.nano")
+    from crossborder_selector.aws.ec2 import instance_group_ids
+    inst = ec2.describe_instances(InstanceIds=ids)["Reservations"][0]["Instances"][0]
+    assert set(instance_group_ids(inst)) == {infra.security_group_id}
+    ud = ec2.describe_instance_attribute(InstanceId=ids[0], Attribute="userData")["UserData"]
+    assert not ud.get("Value")
+
+
+def test_delete_security_group_retries_dependency_violation_then_gives_up():
+    from botocore.exceptions import ClientError
+    class Ec2:
+        def __init__(self, fail_times):
+            self.fail_times, self.calls = fail_times, 0
+        def delete_security_group(self, GroupId):
+            self.calls += 1
+            if self.calls <= self.fail_times:
+                raise ClientError({"Error": {"Code": "DependencyViolation", "Message": "in use"}}, "DeleteSecurityGroup")
+    ok = Ec2(fail_times=2)
+    assert Ec2Manager(ok, sleeper=lambda s: None).delete_security_group("sg-x", attempts=5) is True and ok.calls == 3
+    bad = Ec2(fail_times=99)
+    assert Ec2Manager(bad, sleeper=lambda s: None).delete_security_group("sg-x", attempts=3) is False and bad.calls == 3

@@ -195,7 +195,7 @@ def demo_factory(cfg) -> dict:
             "sts": _DemoSts(), "service-quotas": _DemoQuotas()}
 
 
-def demo_ensure_infra(ec2, iam, ssm, cfg) -> Infra:
+def demo_ensure_infra(ec2, iam, ssm, cfg, run_id=None, probe_source_cidrs=None) -> Infra:
     templates = prepare_launch(ec2, ssm, cfg)
     return Infra("subnet-demo", "sg-demo", "crossborder-selector-ssm", templates[0]["ImageId"], templates)
 

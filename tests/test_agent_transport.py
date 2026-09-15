@@ -212,3 +212,21 @@ def test_get_or_start_listener_does_not_deadlock_and_reuses_port():
     finally:
         srv.stop()
         at._LISTENERS.pop("127.0.0.1:0", None)
+
+
+def test_registry_records_remote_ip_from_claims_and_submits():
+    store = AgentJobStore(clock=lambda: 1.0)
+    store.claim("a1", isp="telecom", remote_addr="203.0.113.7")
+    assert store.registry()["a1"]["ip"] == "203.0.113.7"
+    job = store.publish(["1.1.1.1"], 4, [443], 3, ttl_s=60)
+    store.submit(job["job_id"], "a2", "unicom", _items("1.1.1.1", [1]), remote_addr="198.51.100.9")
+    assert store.registry()["a2"]["ip"] == "198.51.100.9"
+    assert store.registry()["a1"]["ip"] == "203.0.113.7"  # 未带地址的后续调用不覆盖
+    store.claim("a1", isp="telecom")
+    assert store.registry()["a1"]["ip"] == "203.0.113.7"
+
+
+def test_http_transport_records_client_ip_in_registry(http_server):
+    store, base = http_server
+    _get(f"{base}/api/agent/jobs?agent_id=lap&isp=telecom", token="secret")
+    assert store.registry()["lap"]["ip"] == "127.0.0.1"

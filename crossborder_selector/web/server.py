@@ -150,7 +150,8 @@ class Handler(BaseHTTPRequestHandler):
         token = self.ctx["api"].load({}).backends["agent"]["http"].get("token", "")
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else b""
-        status, obj = handle_agent_request(store, token, method, u.path, qs, self.headers, body)
+        status, obj = handle_agent_request(store, token, method, u.path, qs, self.headers, body,
+                                           remote_addr=self.client_address[0])
         if obj is None:
             self.send_response(status)
             self.send_header("Content-Length", "0")

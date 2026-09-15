@@ -126,3 +126,19 @@ def test_build_backends_remote_transports_use_injected_broker():
         backends = cli.build_backends(cfg, ssm_runner=None, agent_broker=broker)
         remote = [b for b in backends if isinstance(b, RemoteAgentBackend)]
         assert len(remote) == 1 and remote[0].broker is broker
+
+
+def test_probe_source_cidrs_resolution_order():
+    from crossborder_selector.cli import probe_source_cidrs
+    base = {"enabled": True, "transport": "http", "probe_source_cidrs": []}
+    # 1) 显式配置优先
+    assert probe_source_cidrs({**base, "probe_source_cidrs": ["10.0.0.0/8"]}, registry={"a": {"ip": "1.1.1.1"}}) == ["10.0.0.0/8"]
+    # 2) http：用已注册 agent 的来源 IP（去重、排序、/32；回环地址也保留，本机测试可用）
+    reg = {"a": {"ip": "203.0.113.7"}, "b": {"ip": "203.0.113.7"}, "c": {"ip": "127.0.0.1"}, "d": {"ip": ""}}
+    assert probe_source_cidrs(base, registry=reg) == ["127.0.0.1/32", "203.0.113.7/32"]
+    # 3) ssm：由调用方传入 agent 实例公网 IP
+    assert probe_source_cidrs({**base, "transport": "ssm"}, instance_ips=["198.51.100.9"]) == ["198.51.100.9/32"]
+    # 4) s3 或没有任何来源：空列表 → 不开 TCP
+    assert probe_source_cidrs({**base, "transport": "s3"}) == []
+    assert probe_source_cidrs(base, registry={}) == []
+    assert probe_source_cidrs({**base, "enabled": False}, registry=reg) == []

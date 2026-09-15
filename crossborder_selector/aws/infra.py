@@ -1,6 +1,7 @@
 """可复用的子网、安全组、SSM 实例配置及 AL2023 镜像。"""
 import json
 import re
+import time
 from dataclasses import dataclass, field
 
 from botocore.exceptions import ClientError
@@ -30,6 +31,79 @@ class Infra:
     launch_templates: tuple = ()
     # instance_type -> 同 VPC 其他可用区、且提供该机型的子网；某可用区容量不足时按顺序回退。显式 subnet_id 时为空
     alternate_subnets: dict = field(default_factory=dict)
+    # 每次运行独立的拨测安全组（只开 agent 的 tcp_ports、只对拨测来源）；保留实例在运行结束时摘掉它，组随后删除
+    probe_security_group_id: str = ""
+    # 候选机 user-data：在 tcp_ports 上起临时监听（进程名含 crossborder_listener），让 TCP 握手有对端；保留实例上会被停掉
+    user_data: str = ""
+
+
+RUN_TAG_KEY = "crossborder-run-id"
+PROBE_SG_PREFIX = "crossborder-probe-"
+
+
+def probe_sg_name(run_id: str) -> str:
+    return PROBE_SG_PREFIX + run_id
+
+
+def listener_user_data(tcp_ports) -> str:
+    """AL2023 / Ubuntu 均自带 python3；每个端口一个最小 TCP 监听，仅回应握手与简单 HTTP。"""
+    ports = " ".join(str(int(p)) for p in tcp_ports)
+    return ("#!/bin/bash\n"
+            "# crossborder_listener: temporary TCP listeners for probe measurements; stopped on retained instances\n"
+            f"for p in {ports}; do\n"
+            "  nohup python3 -c 'import http.server,socketserver,sys\n"
+            "socketserver.TCPServer.allow_reuse_address=True\n"
+            "socketserver.TCPServer((\"\",int(sys.argv[1])),http.server.BaseHTTPRequestHandler).serve_forever()' "
+            "\"$p\" crossborder_listener >/dev/null 2>&1 &\n"
+            "done\n")
+
+
+STOP_LISTENER_SCRIPT = "pkill -f crossborder_listener || true\n"
+
+
+def ensure_probe_security_group(ec2, vpc_id: str, run_id: str, tcp_ports, source_cidrs) -> str:
+    """创建/复用本次运行的拨测组。没有来源 CIDR 时不创建，返回空串（此时只有 ICMP 可测）。"""
+    cidrs = sorted({c for c in source_cidrs or [] if c})
+    if not cidrs or not tcp_ports:
+        return ""
+    name = probe_sg_name(run_id)
+    found = ec2.describe_security_groups(Filters=[
+        {"Name": "group-name", "Values": [name]}, {"Name": "vpc-id", "Values": [vpc_id]}])["SecurityGroups"]
+    if found:
+        group_id = found[0]["GroupId"]
+    else:
+        group_id = ec2.create_security_group(
+            GroupName=name, Description=f"crossborder probe TCP ingress for run {run_id}", VpcId=vpc_id,
+            TagSpecifications=[{"ResourceType": "security-group",
+                                "Tags": [MANAGED_TAG, {"Key": RUN_TAG_KEY, "Value": run_id}]}])["GroupId"]
+    perms = [{"IpProtocol": "tcp", "FromPort": int(p), "ToPort": int(p),
+              "IpRanges": [{"CidrIp": c, "Description": "crossborder probe source"} for c in cidrs]}
+             for p in tcp_ports]
+    try:
+        ec2.authorize_security_group_ingress(GroupId=group_id, IpPermissions=perms)
+    except ClientError as exc:
+        if exc.response["Error"]["Code"] != "InvalidPermission.Duplicate":
+            raise
+    return group_id
+
+
+def delete_probe_security_group(ec2, run_id: str, attempts: int = 6, sleeper=time.sleep) -> bool:
+    """删除本次运行的拨测组。实例终止有延迟会报 DependencyViolation，按次数重试；不存在返回 False。"""
+    found = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [probe_sg_name(run_id)]}])["SecurityGroups"]
+    if not found:
+        return False
+    group_id = found[0]["GroupId"]
+    for i in range(attempts):
+        try:
+            ec2.delete_security_group(GroupId=group_id)
+            return True
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] == "InvalidGroup.NotFound":
+                return True
+            if exc.response["Error"]["Code"] != "DependencyViolation" or i == attempts - 1:
+                raise
+            sleeper(10)
+    return False
 
 
 def arch_for_instance_type(instance_type: str) -> str:
@@ -236,7 +310,7 @@ def ensure_instance_profile(iam) -> str:
     return PROFILE_NAME
 
 
-def ensure_infra(ec2, iam, ssm, cfg) -> Infra:
+def ensure_infra(ec2, iam, ssm, cfg, run_id: str = None, probe_source_cidrs=None) -> Infra:
     templates = prepare_launch(ec2, ssm, cfg)
     alternates = {}
     vpc_id, subnets = prepare_subnets(ec2, cfg, alternates)
@@ -244,7 +318,14 @@ def ensure_infra(ec2, iam, ssm, cfg) -> Infra:
     sg = cfg.security_group_id or ensure_security_group(ec2, vpc_id, needs_inbound_ping(cfg))
     validate_security_group(ec2, sg, vpc_id, needs_inbound_ping(cfg))
     profile = cfg.instance_profile_name or ensure_instance_profile(iam)
-    return Infra(subnets[cfg.instance_type], sg, profile, templates[0]["ImageId"], templates, alternates)
+    probe_sg, user_data = "", ""
+    agent = cfg.backends.get("agent", {})
+    if run_id and agent.get("enabled") and probe_source_cidrs:
+        probe_sg = ensure_probe_security_group(ec2, vpc_id, run_id, agent.get("tcp_ports", []), probe_source_cidrs)
+        if probe_sg:
+            user_data = listener_user_data(agent.get("tcp_ports", []))
+    return Infra(subnets[cfg.instance_type], sg, profile, templates[0]["ImageId"], templates, alternates,
+                 probe_sg, user_data)
 
 
 def delete_infra(ec2, iam) -> None:
